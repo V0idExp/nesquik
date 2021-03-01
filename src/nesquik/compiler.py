@@ -4,7 +4,8 @@ from enum import Enum
 
 class NESQuikError(Exception):
 
-    def __init__(self, tree):
+    def __init__(self, tree, *args):
+        super().__init__(*args)
         self.tree = tree
 
     def __str__(self):
@@ -66,16 +67,19 @@ class CodeGenerator(Visitor):
     def ret(self, t):
         result = t.children[0]
         if result.loc is None:
+            # immediate
             self._code(f'lda #{result.children[0]}')
         elif result.loc is Reg.A:
+            # do nothing, result already in A
             pass
         elif result.loc is Reg.X:
+            # transfer X to A
             self._code(f'txa')
         elif result.loc is Reg.Y:
+            # transfer Y to A
             self._code(f'tya')
         else:
-            addr = hex(result.loc)[2:]
-            self._code(f'lda ${addr}')
+            self._code(f'lda ${result.addr}')
 
         # self._code(f'rts')
 
@@ -90,21 +94,21 @@ class CodeGenerator(Visitor):
                 # just subtract it
                 self._code(f'sbc #{right.children[0]}')
             else:
-                # subtract from zero-page
-                self._code(f'sbc ${hex(right.loc)[2:]}')
+                # subtract from zero-page and remove
+                self._code(f'sbc ${right.addr}')
+                self._free(right)
 
         else:
-            self._save()
-
-            if left.loc is None:
-                self._code(f'lda #{left.children[0]}')
-            else:
-                self._load(left)
+            self._pusha()
+            self._pulla(left)
 
             if right.loc is None:
+                # immediate
                 self._code(f'sbc #{right.children[0]}')
             else:
-                self._code(f'sbc ${hex(right.loc)[2:]}')
+                # memory
+                self._code(f'sbc ${right.addr}')
+                self._free(right)
 
         self._setloc(t, Reg.A)
 
@@ -120,30 +124,37 @@ class CodeGenerator(Visitor):
                 # just add it
                 self._code(f'adc #{right.children[0]}')
             else:
-                # load it from zero-page
-                self._code(f'adc ${hex(right.loc)[2:]}')
+                # add it by loading from zero-page
+                self._code(f'adc ${right.addr}')
+                # remove it from zero-page
+                self._free(right)
 
         # if right operand is already in A, add the left
         elif right.loc is Reg.A:
-            # if left is an immediate
             if left.loc is None:
-                # just add it
+                # left is an immediate, just add it
                 self._code(f'adc #{left.children[0]}')
             else:
                 # load it from zero-page
-                self._code(f'adc ${hex(left.loc)[2:]}')
+                self._code(f'adc ${left.addr}')
+                # remove it frome zero page
+                self._free(left)
 
+        # none of the operands are in A
         else:
-            self._save()
-            if left.loc is None:
-                self._code(f'lda #{left.children[0]}')
-            else:
-                self._load(left)
+            # save A
+            self._pusha()
+
+            # load left into A
+            self._pulla(left)
 
             if right.loc is None:
+                # immediate
                 self._code(f'adc #{right.children[0]}')
             else:
-                self._code(f'adc ${hex(right.loc)[2:]}')
+                # memory
+                self._code(f'adc ${right.addr}')
+                self._free(right)
 
         self._setloc(t, Reg.A)
 
@@ -152,10 +163,10 @@ class CodeGenerator(Visitor):
 
     def neg(self, t):
         arg = t.children[0]
-        self._save()
+        self._pusha()
 
         # load arg into A
-        self._load(arg)
+        self._pulla(arg)
 
         # perform two's complement negation: invert all bits and add 1
         self._code(f'clc')
@@ -164,36 +175,42 @@ class CodeGenerator(Visitor):
 
         self._setloc(t, Reg.A)
 
-    def _save(self):
+    def _pusha(self):
         t = self.registers.get(Reg.A)
         if t is not None:
-            for i in self.addrtable:
-                if self.addrtable[i] is None:
-                    t.loc = i
-                    self.addrtable[i] = t
-                    addr = hex(i)[2:]
-                    self._code(f'sta ${addr}')
-                    break
+            try:
+                i = next(k for k in self.addrtable if self.addrtable[k] is None)
+                self._setloc(t, i)
+                self._code(f'sta ${t.addr}')
+            except StopIteration:
+                raise NESQuikInternalError(t, 'out of temporary memory')
 
-    def _load(self, t):
+    def _pulla(self, t):
         if t.loc is None:
             # immediate
             self._code(f'lda #{t.children[0]}')
-        elif t.loc not in Reg:
+        elif isinstance(t.loc, int):
             # memory
-            addr = hex(t.loc)[2:]
-            self._code(f'lda ${addr}')
-        elif t.loc == Reg.X:
-            # X register
-            self._code('txa')
-        elif t.loc == Reg.Y:
-            # Y register
-            self._code('tya')
+            self._code(f'lda ${t.addr}')
+
+        self._setloc(t, Reg.A)
+
+    def _free(self, t):
+        if isinstance(t.loc, int):
+            self.addrtable[t.loc] = None
 
     def _setloc(self, t, loc):
-        setattr(t, 'loc', loc)
+        if hasattr(t, 'loc'):
+            self._free(t)
+
         if isinstance(loc, Reg):
+            # add to registers
             self.registers[loc] = t
+        elif isinstance(loc, int):
+            self.addrtable[loc] = t
+
+        setattr(t, 'loc', loc)
+        setattr(t, 'addr', f'{hex(loc)[2:]}' if isinstance(loc, int) else None)
 
     def _code(self, code):
         self.prg.code.append(code)
@@ -214,6 +231,5 @@ def compile(ast):
             v.visit_topdown(ast)
         else:
             v.visit(ast)
-
 
     return prg.code
