@@ -66,7 +66,7 @@ class CodeGenerator(Visitor):
     def ret(self, t):
         result = t.children[0]
         if result.loc is None:
-            self._code(f'lda #{result.loc}')
+            self._code(f'lda #{result.children[0]}')
         elif result.loc is Reg.A:
             pass
         elif result.loc is Reg.X:
@@ -94,7 +94,7 @@ class CodeGenerator(Visitor):
                 self._code(f'sbc ${hex(right.loc)[2:]}')
 
         else:
-            self._save_a()
+            self._save()
 
             if left.loc is None:
                 self._code(f'lda #{left.children[0]}')
@@ -134,7 +134,7 @@ class CodeGenerator(Visitor):
                 self._code(f'adc ${hex(left.loc)[2:]}')
 
         else:
-            self._save_a()
+            self._save()
             if left.loc is None:
                 self._code(f'lda #{left.children[0]}')
             else:
@@ -150,7 +150,21 @@ class CodeGenerator(Visitor):
     def imm(self, t):
         self._setloc(t, None)
 
-    def _save_a(self):
+    def neg(self, t):
+        arg = t.children[0]
+        self._save()
+
+        # load arg into A
+        self._load(arg)
+
+        # perform two's complement negation: invert all bits and add 1
+        self._code(f'clc')
+        self._code(f'eor #$ff')
+        self._code(f'adc #1')
+
+        self._setloc(t, Reg.A)
+
+    def _save(self):
         t = self.registers.get(Reg.A)
         if t is not None:
             for i in self.addrtable:
@@ -162,12 +176,23 @@ class CodeGenerator(Visitor):
                     break
 
     def _load(self, t):
-        addr = hex(t.loc)[2:]
-        self._code(f'lda ${addr}')
+        if t.loc is None:
+            # immediate
+            self._code(f'lda #{t.children[0]}')
+        elif t.loc not in Reg:
+            # memory
+            addr = hex(t.loc)[2:]
+            self._code(f'lda ${addr}')
+        elif t.loc == Reg.X:
+            # X register
+            self._code('txa')
+        elif t.loc == Reg.Y:
+            # Y register
+            self._code('tya')
 
     def _setloc(self, t, loc):
         setattr(t, 'loc', loc)
-        if loc in Reg:
+        if isinstance(loc, Reg):
             self.registers[loc] = t
 
     def _code(self, code):
@@ -191,4 +216,4 @@ def compile(ast):
             v.visit(ast)
 
 
-    return '\n'.join(prg.code)
+    return prg.code

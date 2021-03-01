@@ -15,7 +15,7 @@ def nq(file):
     print(ast.pretty())
 
     code = compile(ast)
-    print(code)
+    print('\n'.join(code))
 
 
 if __name__ == '__main__':

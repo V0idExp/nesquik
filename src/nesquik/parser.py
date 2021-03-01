@@ -1,5 +1,5 @@
 from pprint import pprint
-import lark
+from lark import Lark
 
 
 _grammar = r'''
@@ -20,6 +20,7 @@ _grammar = r'''
     ?term: factor "*" factor    -> mul
          | factor "/" factor    -> div
          | factor
+         | "-" factor           -> neg
 
     ?factor: NAME        -> ref
            | HEXINT      -> imm
@@ -40,25 +41,14 @@ _grammar = r'''
 '''
 
 
-class Node:
-
-    def __init__(self, *children):
-        self.children = children
-
-    def pretty_print(self):
-        nodes = [(0, self)]
-        while nodes:
-            level, node = nodes.pop(0)
-            print('  ' * level + str(node))
-            for child in reversed(node.children):
-                nodes.insert(0, (level + 1, child))
-
-    def __str__(self):
-        return f'{self.__class__.__name__}'
+_parser = Lark(_grammar, parser='lalr', propagate_positions=True)
 
 
-_parser = lark.Lark(_grammar, parser='lalr', propagate_positions=True)
+def parse(code, transforms=None):
+    ast = _parser.parse(code)
 
+    for cls in transforms or []:
+        t = cls()
+        ast = t.transform(ast)
 
-def parse(code):
-    return _parser.parse(code)
+    return ast
