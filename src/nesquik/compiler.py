@@ -1,5 +1,8 @@
-from lark import Visitor, Transformer, v_args
 from enum import Enum
+
+from lark import Visitor
+
+from nesquik.opcodes import OPCODES, AddrMode, Op
 
 
 class NESQuikError(Exception):
@@ -30,8 +33,8 @@ class NESQuikInternalError(NESQuikError):
 class Program:
 
     def __init__(self):
-        self.symtable = {}
-        self.code = []
+        self.asm = []
+        self.obj = bytearray()
 
 
 class VarsChecker(Visitor):
@@ -59,103 +62,51 @@ class Reg(Enum):
 
 class CodeGenerator(Visitor):
 
-    def __init__(self, prg):
-        self.prg = prg
+    def __init__(self, _):
         self.registers = {}
         self.addrtable = [None] * 0xff
         self.reserved = 2
 
     def ret(self, t):
-        result = t.children[0]
-        if result.loc is None:
-            # immediate
-            self._code(f'lda #{result.children[0]}')
-        elif result.loc is Reg.A:
-            # do nothing, result already in A
-            pass
-        elif result.loc is Reg.X:
-            # transfer X to A
-            self._code(f'txa')
-        elif result.loc is Reg.Y:
-            # transfer Y to A
-            self._code(f'tya')
-        else:
-            self._code(f'lda ${result.addr}')
-
-        # self._code(f'rts')
+        self._pulla(t, t.children[0])
 
     def sub(self, t):
-        self._code('sec')
-
+        self._instr(t, Op.SEC)
         left, right = t.children
+
         # if left operand is already in A, subtract the right
         if left.loc is Reg.A:
-            # if right is an immediate
-            if right.loc is None:
-                # just subtract it
-                self._code(f'sbc #{right.children[0]}')
-            else:
-                # subtract from zero-page and remove
-                self._code(f'sbc ${right.addr}')
-                self._free(right)
-
+            self._instr(t, Op.SBC, right)
+            self._free(right)
         else:
             self._pusha()
-            self._pulla(left)
-
-            if right.loc is None:
-                # immediate
-                self._code(f'sbc #{right.children[0]}')
-            else:
-                # memory
-                self._code(f'sbc ${right.addr}')
-                self._free(right)
+            self._pulla(t, left)
+            self._instr(t, Op.SBC, right)
+            self._free(right)
 
         self._setloc(t, Reg.A)
 
     def add(self, t):
+        self._instr(t, Op.CLC)
         left, right = t.children
-
-        self._code('clc')
 
         # if left operand is already in A, add the right
         if left.loc is Reg.A:
-            # if right is an immediate
-            if right.loc is None:
-                # just add it
-                self._code(f'adc #{right.children[0]}')
-            else:
-                # add it by loading from zero-page
-                self._code(f'adc ${right.addr}')
-                # remove it from zero-page
-                self._free(right)
+            self._instr(t, Op.ADC, right)
+            self._free(right)
 
         # if right operand is already in A, add the left
         elif right.loc is Reg.A:
-            if left.loc is None:
-                # left is an immediate, just add it
-                self._code(f'adc #{left.children[0]}')
-            else:
-                # load it from zero-page
-                self._code(f'adc ${left.addr}')
-                # remove it frome zero page
-                self._free(left)
+            self._instr(t, Op.ADC, left)
+            self._free(left)
 
         # none of the operands are in A
         else:
             # save A
             self._pusha()
-
-            # load left into A
-            self._pulla(left)
-
-            if right.loc is None:
-                # immediate
-                self._code(f'adc #{right.children[0]}')
-            else:
-                # memory
-                self._code(f'adc ${right.addr}')
-                self._free(right)
+            self._pulla(t, left)
+            self._instr(t, Op.ADC, right)
+            self._free(right)
 
         self._setloc(t, Reg.A)
 
@@ -167,12 +118,12 @@ class CodeGenerator(Visitor):
         self._pusha()
 
         # load arg into A
-        self._pulla(arg)
+        self._pulla(t, arg)
 
         # perform two's complement negation: invert all bits and add 1
-        self._code(f'clc')
-        self._code(f'eor #$ff')
-        self._code(f'adc #1')
+        self._instr(t, Op.CLC)
+        self._instr(t, Op.EOR, 0xff)
+        self._instr(t, Op.ADC, 0x01)
 
         self._setloc(t, Reg.A)
 
@@ -182,19 +133,24 @@ class CodeGenerator(Visitor):
             try:
                 i = next(i for i in range(self.reserved, len(self.addrtable)) if self.addrtable[i] is None)
                 self._setloc(t, i)
-                self._code(f'sta ${t.addr}')
+                self._instr(t, Op.STA, t)
             except StopIteration:
                 raise NESQuikInternalError(t, 'out of temporary memory')
 
-    def _pulla(self, t):
-        if t.loc is None:
-            # immediate
-            self._code(f'lda #{t.children[0]}')
-        elif isinstance(t.loc, int):
-            # memory
-            self._code(f'lda ${t.addr}')
-
-        self._setloc(t, Reg.A)
+    def _pulla(self, t, arg):
+        if arg.loc is Reg.A:
+            # do nothing
+            return
+        elif arg.loc is Reg.X:
+            # transfer X to A
+            self._instr(t, Op.TXA)
+        elif arg.loc is Reg.Y:
+            # transfer Y to A
+            self._instr(t, Op.TYA)
+        else:
+            # either immediate or memory
+            self._instr(t, Op.LDA, arg)
+        self._setloc(arg, Reg.A)
 
     def _free(self, t):
         if isinstance(t.loc, int):
@@ -211,15 +167,62 @@ class CodeGenerator(Visitor):
             self.addrtable[loc] = t
 
         setattr(t, 'loc', loc)
-        setattr(t, 'addr', f'{hex(loc)[2:]}' if isinstance(loc, int) else None)
 
-    def _code(self, code):
-        self.prg.code.append(code)
+    def _instr(self, t, op, arg=None):
+        if arg is None:
+            mode = AddrMode.Implied
+        elif isinstance(arg, (int, str)):
+            mode = AddrMode.Immediate
+        elif arg.loc is None:
+            mode = AddrMode.Immediate
+            arg = str(arg.children[0])
+        elif isinstance(arg.loc, int):
+            mode = AddrMode.Zeropage
+            arg = arg.loc
+        else:
+            raise NESQuikInternalError(t, 'cannot determine address mode')
+
+        code = getattr(t, 'code', [])
+        code.append((op, mode, arg))
+        setattr(t, 'code', code)
+
+
+class Assembler(Visitor):
+
+    def __init__(self, prg):
+        self.prg = prg
+        self.size = 0
+
+    def __default__(self, t):
+        for op, mode, arg in getattr(t, 'code', []):
+            if mode is AddrMode.Implied:
+                code = op.value
+            elif mode is AddrMode.Immediate:
+                code = f'{op.value} #{arg}'
+                if isinstance(arg, str):
+                    if arg.startswith('$'):
+                        arg = int(arg[1:], base=16)
+                    else:
+                        arg = int(arg, base=10)
+            elif mode is AddrMode.Zeropage:
+                code = f'{op.value} ${arg}'
+
+            opcode, size = OPCODES[(op, mode)]
+            bytecode = bytearray(size)
+            bytecode[0] = opcode
+            if size == 2:
+                bytecode[1] = arg
+            elif size > 2:
+                raise NESQuikInternalError(t, 'unsupported operand size')
+
+            self.prg.asm.append(code)
+            self.prg.obj.extend(bytecode)
 
 
 PASSES = [
     (VarsChecker, True),
     (CodeGenerator, False),
+    (Assembler, False),
 ]
 
 
@@ -233,4 +236,4 @@ def compile(ast):
         else:
             v.visit(ast)
 
-    return prg.code
+    return prg

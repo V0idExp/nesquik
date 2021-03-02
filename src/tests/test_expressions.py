@@ -1,5 +1,6 @@
 import pytest
 
+
 @pytest.mark.parametrize('code, exp_result', [
     (
         'return $f0',
