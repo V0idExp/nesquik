@@ -11,7 +11,8 @@ logger.setLevel(logging.DEBUG)
 
 @click.command()
 @click.argument('file', type=click.File('r'))
-def nq(file):
+@click.option('-o', type=click.File('wb'), required=False)
+def nq(file, o):
     code = file.read()
     print(code)
 
@@ -28,6 +29,8 @@ def nq(file):
     print()
     print(f'size: {len(program.obj)} bytes')
 
+    if o:
+        o.write(program.obj)
 
 if __name__ == '__main__':
     nq()  # pylint: disable=no-value-for-parameter
