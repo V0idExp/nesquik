@@ -3,7 +3,7 @@ from lark import Lark
 
 
 _grammar = r'''
-    ?start: (_statement|COMMENT|NEWLINE)*
+    start: (_statement|COMMENT|NEWLINE)*
 
     _statement: assign
               | ret
@@ -17,15 +17,17 @@ _grammar = r'''
     ?binop: expression "+" term -> add
           | expression "-" term -> sub
 
-    ?term: factor "*" factor    -> mul
-         | factor "/" factor    -> div
+    ?term: factor "*" term      -> mul
+         | factor "/" term      -> div
          | factor
-         | "-" factor           -> neg
 
-    ?factor: NAME        -> ref
-           | HEXINT      -> imm
-           | INT         -> imm
+    ?unop: "-" factor           -> neg
+
+    ?factor: NAME               -> ref
+           | HEXINT             -> imm
+           | INT                -> imm
            | "(" expression ")"
+           | unop
 
     HEXINT: "$" HEXDIGIT+
 
