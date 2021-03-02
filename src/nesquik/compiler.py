@@ -62,7 +62,8 @@ class CodeGenerator(Visitor):
     def __init__(self, prg):
         self.prg = prg
         self.registers = {}
-        self.addrtable = {i: None for i in range(0xff)}
+        self.addrtable = [None] * 0xff
+        self.reserved = 2
 
     def ret(self, t):
         result = t.children[0]
@@ -179,7 +180,7 @@ class CodeGenerator(Visitor):
         t = self.registers.get(Reg.A)
         if t is not None:
             try:
-                i = next(k for k in self.addrtable if self.addrtable[k] is None)
+                i = next(i for i in range(self.reserved, len(self.addrtable)) if self.addrtable[i] is None)
                 self._setloc(t, i)
                 self._code(f'sta ${t.addr}')
             except StopIteration:
