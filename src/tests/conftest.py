@@ -19,13 +19,10 @@ class CPU(MPU):
         self.memory[0xc000:0xc000 + len(obj)] = obj
         self.pc = 0xc000
 
-        for _ in range(len(prg.asm)):
+        while not self.p & self.INTERRUPT:
             self.step()
 
         return prg
-
-    def __repr__(self):
-        return object.__repr__(self)
 
 
 @pytest.fixture
