@@ -1,72 +1,39 @@
 import re
-from enum import Enum, IntEnum
+from enum import Enum
 from itertools import count
 
-from lark import Visitor
+from lark.visitors import Interpreter
 
 from nesquik.lib import MUL
 from nesquik.opcodes import OPCODES, AddrMode, Op
 
+
 GLOBAL_LABEL = re.compile(r'^\w{3,}$')
 
 
-class NESQuikError(Exception):
+class NESQuikUndefinedVariable(Exception):
 
-    def __init__(self, tree, *args):
-        super().__init__(*args)
-        self.tree = tree
-
-    def __str__(self):
-        return f'line {self.tree.meta.line}: {self.args[0]}'
+    pass
 
 
-class NESQuikUndefinedVariable(NESQuikError):
+class NESQuikUndefinedLabel(Exception):
 
-    def __init__(self, tree, var_name):
-        super().__init__(tree)
-        self.var_name = var_name
-
-    def __str__(self):
-        return super().__str__() + f': variable "{self.var_name}" used but not defined'
+    pass
 
 
-class NESQuikUndefinedLabel(NESQuikError):
-
-    def __init__(self, tree, name):
-        super().__init__(tree)
-        self.name = name
-
-    def __str__(self):
-        return super().__str__() + f': label "{self.name}" used but not defined'
-
-
-class NESQuikInternalError(NESQuikError):
+class NESQuikInternalError(Exception):
 
     pass
 
 
 class Program:
 
-    def __init__(self, org):
-        self.asm = []
-        self.obj = bytearray()
+    def __init__(self, ast, org):
+        self.ast = ast
         self.org = org
-
-
-class VarsChecker(Visitor):
-
-    def __init__(self, _):
-        self.vars = {}
-
-    def assign(self, tree):
-        name = tree.children[0].value
-        self.vars[name] = tree
-
-    def ref(self, tree):
-        name = tree.children[0].value
-        if name not in self.vars:
-            raise NESQuikUndefinedVariable(tree, name)
-
+        self.asm = []
+        self.code = []
+        self.obj = bytearray()
 
 
 class Reg(Enum):
@@ -76,29 +43,45 @@ class Reg(Enum):
     Y = 'Y'
 
 
-class CodeGenerator(Visitor):
+class Stage:
 
-    def __init__(self, prg):
-        self.prg = prg
+    def exec(self, prg: Program):
+        raise NotImplementedError
+
+
+class CodeGenerator(Interpreter, Stage):
+
+    def __init__(self):
+        super().__init__()
+        self.prg = None
         self.registers = {}
         self.addrtable = [None] * 0xff
+        self.vars = {}
         self.reserved = 2
         self.label_counter = count()
         self.required = {}
 
+    def exec(self, prg):
+        self.prg = prg
+        self.visit(prg.ast)
+
     def ret(self, t):
+        self.visit_children(t)
         self._pull(t, t.children[0])
 
     def sub(self, t):
-        self._instr(t, Op.SEC)
+        self.visit_children(t)
         left, right = t.children
 
-        # if left operand is already in A, subtract the right
+        self._instr(t, Op.SEC)
+
         if left.loc is Reg.A:
+            # if left operand is already in A, subtract the right
             self._instr(t, Op.SBC, right)
             self._free(right)
         else:
-            self._push()
+            # load left to A and subtract the right
+            self._push(Reg.A)
             self._pull(t, left)
             self._instr(t, Op.SBC, right)
             self._free(right)
@@ -106,37 +89,33 @@ class CodeGenerator(Visitor):
         self._setloc(t, Reg.A)
 
     def add(self, t):
-        self._instr(t, Op.CLC)
+        self.visit_children(t)
         left, right = t.children
 
-        # if left operand is already in A, add the right
+        self._instr(t, Op.CLC)
+
         if left.loc is Reg.A:
+            # if left operand is already in A, add the right
             self._instr(t, Op.ADC, right)
             self._free(right)
-
-        # if right operand is already in A, add the left
         elif right.loc is Reg.A:
+            # if right operand is already in A, add the left
             self._instr(t, Op.ADC, left)
             self._free(left)
-
-        # none of the operands are in A
         else:
-            # save A
-            self._push()
+            # none of the operands are in A, load left to A and add the right
+            self._push(Reg.A)
             self._pull(t, left)
             self._instr(t, Op.ADC, right)
             self._free(right)
 
         self._setloc(t, Reg.A)
 
-    def imm(self, t):
-        self._setloc(t, None)
-
     def neg(self, t):
+        self.visit_children(t)
         arg = t.children[0]
-        self._push()
 
-        # load arg into A
+        self._push(Reg.A)
         self._pull(t, arg)
 
         # perform two's complement negation: invert all bits and add 1
@@ -147,17 +126,18 @@ class CodeGenerator(Visitor):
         self._setloc(t, Reg.A)
 
     def mul(self, t):
+        self.visit_children(t)
         left, right = t.children
 
         self._push(Reg.A)
         self._pull(t, left, Reg.X)
         self._pull(t, right, Reg.Y)
         self._instr(t, Op.JSR, self._require(MUL))
-        self._free(left)
-        self._free(right)
         self._setloc(t, Reg.A)
 
     def start(self, t):
+        self.visit_children(t)
+
         if self.required:
             # if there are any required subroutines, they'll be added at the end
             # of the code, separate them for previous code with a BRK
@@ -172,14 +152,45 @@ class CodeGenerator(Visitor):
             for instr in subroutine.code:
                 self._instr(t, *instr)
 
+    def assign(self, t):
+        self.visit_children(t)
+        name, expr = t.children
+        name = name.value
+
+        if isinstance(expr.loc, int):
+            # expression already in memory, pin it there
+            self.vars[name] = expr.loc
+        else:
+            # if the expression is an immediate, load it into A
+            if expr.loc is None:
+                self._pull(t, expr, Reg.A)
+
+            # expression in registers, allocate memory for it and store it there
+            loc = self._alloc(t)
+            self.vars[name] = loc
+            self._store(t, expr.loc, loc)
+
+    def imm(self, t):
+        self._setloc(t, None)
+
+    def ref(self, t):
+        name = t.children[0].value
+
+        try:
+            self._setloc(t, self.vars[name])
+        except KeyError:
+            raise NESQuikUndefinedVariable(f'undefined variable {name}')
+
+    def _alloc(self, t):
+        try:
+            return next(i for i in range(self.reserved, len(self.addrtable)) if self.addrtable[i] is None)
+        except StopIteration:
+            raise NESQuikInternalError(f'out of scratch memory')
+
     def _push(self, reg=Reg.A):
         t = self.registers.get(reg)
-        if t is not None:
-            try:
-                i = next(i for i in range(self.reserved, len(self.addrtable)) if self.addrtable[i] is None)
-            except StopIteration:
-                raise NESQuikInternalError(t, 'out of temporary memory')
-
+        if t is not None and not isinstance(t.loc, int):
+            i = self._alloc(t)
             self._setloc(t, i)
 
             op = {
@@ -188,6 +199,16 @@ class CodeGenerator(Visitor):
                 Reg.Y: Op.STY
             }[reg]
             self._instr(t, op, t)
+
+    def _store(self, t, reg, loc):
+        v = self.registers[reg]
+        op = {
+            Reg.A: Op.STA,
+            Reg.X: Op.STX,
+            Reg.Y: Op.STY
+        }[reg]
+        self._setloc(v, loc)
+        self._instr(t, op, v)
 
     def _pull(self, t, arg, reg=Reg.A):
         if arg.loc is reg:
@@ -227,7 +248,7 @@ class CodeGenerator(Visitor):
         self._setloc(arg, reg)
 
     def _free(self, t):
-        if isinstance(t.loc, int):
+        if isinstance(t.loc, int) and not t.loc in self.vars.values():
             self.addrtable[t.loc] = None
 
     def _setloc(self, t, loc):
@@ -302,9 +323,7 @@ class CodeGenerator(Visitor):
         if label is not None and label.startswith('@'):
             label = self._getlabel(t, label)
 
-        code = getattr(t, 'code', [])
-        code.append((op, mode, arg, label))
-        setattr(t, 'code', code)
+        self.prg.code.append((op, mode, arg, label))
 
         if op is None:
             line = ''
@@ -317,7 +336,7 @@ class CodeGenerator(Visitor):
         elif mode in (AddrMode.Relative, AddrMode.Absolute):
             line = f'{op.value} {arg}'
         else:
-            raise NESQuikInternalError(t, f'unsupported addr mode {mode}')
+            raise NESQuikInternalError(f'unsupported addr mode {mode}')
 
         line = ((f'{label}:' if label else '') + '\t' + line)
         if line.strip():
@@ -339,116 +358,111 @@ class CodeGenerator(Visitor):
         return subroutine.name
 
 
-class OffsetInjector(Visitor):
+class AddressInjector(Stage):
 
-    class Phase(Enum):
-
-        COMPUTE_OFFSETS = 0
-        INJECT_OFFSETS = 1
-
-    def __init__(self, prg):
-        self.prg = prg
+    def __init__(self):
         self.offset = 0
         self.labels = {}
-        self.phase = OffsetInjector.Phase.COMPUTE_OFFSETS
 
-    def __default__(self, t):
-        for i, (op, mode, arg, label) in enumerate(getattr(t, 'code', [])):
+    def exec(self, prg):
+        self._compute_offsets(prg.code)
+        self._inject_offsets(prg.org, prg.code)
+
+    def _compute_offsets(self, code):
+        self.offset = 0
+        for op, mode, _, label in code:
             if op is not None:
                 _, size = OPCODES[(op, mode)]
             else:
                 # empty instructions do not change the size
                 size = 0
 
-            if self.phase is OffsetInjector.Phase.COMPUTE_OFFSETS:
-                if label is not None:
-                    self.labels[label] = self.offset
-
-            elif isinstance(arg, str):
-                # a label is found
-                try:
-                    label_offset = self.labels[arg]
-
-                    if mode is AddrMode.Relative:
-                        # in relative addressing, the argument is a displacement
-                        # from current instruction;
-                        # NOTE: the -2 below is for compensating the current
-                        # comparison instruction size
-                        offset = label_offset - self.offset
-                        if offset < 0:
-                            # negative displacements are specified as two's
-                            # complement signed numbers
-                            offset = 0x100 + (offset - 2)
-                        else:
-                            offset -= 2
-                    else:
-                        # in absolute addressing, add the org address to the
-                        # offset
-                        offset = self.prg.org + label_offset
-
-                    t.code[i] = (op, mode, offset, label)
-
-                except KeyError:
-                    raise NESQuikUndefinedLabel(t, arg)
+            if label is not None:
+                self.labels[label] = self.offset
 
             self.offset += size
 
-    def start(self, t):
-        self.__default__(t)
+    def _inject_offsets(self, org, code):
+        self.offset = 0
+        for i, (op, mode, arg, label) in enumerate(code):
+            if op is not None:
+                _, size = OPCODES[(op, mode)]
+            else:
+                # empty instructions do not change the size
+                size = 0
 
-        if self.phase is OffsetInjector.Phase.COMPUTE_OFFSETS:
-            self.phase = OffsetInjector.Phase.INJECT_OFFSETS
-            self.offset = 0
-            self.visit(t)
+            if isinstance(arg, str):
+                # a label is found
+                try:
+                    label_offset = self.labels[arg]
+                except KeyError:
+                    raise NESQuikUndefinedLabel(f'undefined label {arg}')
+
+                if mode is AddrMode.Relative:
+                    # in relative addressing, the argument is a displacement
+                    # from current instruction;
+                    # NOTE: the -2 below is for compensating the current
+                    # comparison instruction size
+                    offset = label_offset - self.offset
+                    if offset < 0:
+                        # negative displacements are specified as two's
+                        # complement signed numbers
+                        offset = 0x100 + (offset - 2)
+                    else:
+                        offset -= 2
+                else:
+                    # in absolute addressing, add the org address to the
+                    # offset
+                    offset = org + label_offset
+
+                code[i] = (op, mode, offset, label)
+
+            self.offset += size
 
 
-class Assembler(Visitor):
+class Assembler(Stage):
 
-    def __init__(self, prg):
-        self.prg = prg
+    def __init__(self):
         self.size = 0
 
-    def __default__(self, t):
-        for op, mode, arg, _ in getattr(t, 'code', []):
+    def exec(self, prg):
+        for op, mode, arg, _ in prg.code:
             if op is None:
                 continue
 
             try:
                 opcode, size = OPCODES[(op, mode)]
             except KeyError:
-                raise NESQuikInternalError(t, 'unsupported operand size')
+                raise NESQuikInternalError('unsupported operand size')
 
-            self.prg.obj.append(opcode)
+            prg.obj.append(opcode)
             if arg is not None:
                 if mode is AddrMode.Absolute and size == 3:
                     # in absolute addressing, the address low part is coming
                     # first, then the hi
                     arg_hi = arg >> 8
                     arg_lo = arg & 0xff
-                    self.prg.obj.append(arg_lo)
-                    self.prg.obj.append(arg_hi)
+                    prg.obj.append(arg_lo)
+                    prg.obj.append(arg_hi)
                 elif size == 2:
-                    self.prg.obj.append(arg)
+                    prg.obj.append(arg)
 
             elif size != 1:
-                raise NESQuikInternalError(t, 'mismatching address mode and argument size')
+                raise NESQuikInternalError('mismatching address mode and argument size')
 
-PASSES = [
-    (VarsChecker, True),
-    (CodeGenerator, False),
-    (OffsetInjector, False),
-    (Assembler, False),
+
+STAGES = [
+    CodeGenerator,
+    AddressInjector,
+    Assembler,
 ]
 
 
-def compile(ast, org=0xc000):
-    prg = Program(org)
+def compile(ast, org):
+    prg = Program(ast, org)
 
-    for cls, top_down in PASSES:
-        v = cls(prg)
-        if top_down:
-            v.visit_topdown(ast)
-        else:
-            v.visit(ast)
+    for stage_cls in STAGES:
+        stage = stage_cls()
+        stage.exec(prg)
 
     return prg

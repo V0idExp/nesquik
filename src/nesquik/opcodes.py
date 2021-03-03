@@ -76,6 +76,5 @@ OPCODES = {
 
 # just a check, lost once few hours because of duplicate opcodes...
 _opcodes = [opcode for opcode, _ in OPCODES.values()]
-print(_opcodes)
 if len(_opcodes) != len(set(_opcodes)):
     raise RuntimeError('!!!DUPLICATE OPCODES!!!')

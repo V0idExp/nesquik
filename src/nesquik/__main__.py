@@ -38,18 +38,18 @@ def nq(file, out, org):
     ast = parse(code)
     print(ast.pretty())
 
-    program = compile(ast, org)
-    print('\n'.join(program.asm))
+    prg = compile(ast, org)
+    print('\n'.join(prg.asm))
 
     print()
-    for byte in program.obj:
+    for byte in prg.obj:
         print(hex(byte)[2:], end=' ')
 
     print()
-    print(f'size: {len(program.obj)} bytes')
+    print(f'size: {len(prg.obj)} bytes')
 
     if out:
-        out.write(program.obj)
+        out.write(prg.obj)
 
 
 if __name__ == '__main__':
