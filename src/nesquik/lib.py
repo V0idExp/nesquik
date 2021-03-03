@@ -36,7 +36,7 @@ def parse_instructions(code):
 # Y - second operand
 # A - result
 MUL = Subroutine(
-    name='mul',
+    name='MUL',
     code=parse_instructions('''
         lda #$00
         sta $00
@@ -55,4 +55,5 @@ MUL = Subroutine(
         tay
         bne @0
         lda $00
+        rts
     '''))

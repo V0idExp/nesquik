@@ -60,6 +60,7 @@ OPCODES = {
     (Op.LDY, AddrMode.Zeropage):    (0xA4, 2),
     (Op.LSR, AddrMode.Implied):     (0x4A, 1),
     (Op.LSR, AddrMode.Zeropage):    (0x46, 2),
+    (Op.RTS, AddrMode.Implied):     (0x60, 1),
     (Op.SBC, AddrMode.Immediate):   (0xE9, 2),
     (Op.SBC, AddrMode.Zeropage):    (0xE5, 2),
     (Op.SEC, AddrMode.Implied):     (0x38, 1),

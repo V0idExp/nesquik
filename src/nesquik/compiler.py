@@ -1,3 +1,4 @@
+import re
 from enum import Enum, IntEnum
 from itertools import count
 
@@ -5,6 +6,8 @@ from lark import Visitor
 
 from nesquik.lib import MUL
 from nesquik.opcodes import OPCODES, AddrMode, Op
+
+GLOBAL_LABEL = re.compile(r'^\w{3,}$')
 
 
 class NESQuikError(Exception):
@@ -44,9 +47,10 @@ class NESQuikInternalError(NESQuikError):
 
 class Program:
 
-    def __init__(self):
+    def __init__(self, org):
         self.asm = []
         self.obj = bytearray()
+        self.org = org
 
 
 class VarsChecker(Visitor):
@@ -80,6 +84,7 @@ class CodeGenerator(Visitor):
         self.addrtable = [None] * 0xff
         self.reserved = 2
         self.label_counter = count()
+        self.required = {}
 
     def ret(self, t):
         self._pull(t, t.children[0])
@@ -147,13 +152,25 @@ class CodeGenerator(Visitor):
         self._push(Reg.A)
         self._pull(t, left, Reg.X)
         self._pull(t, right, Reg.Y)
-
-        for instr in MUL.code:
-            self._instr(t, *instr)
-
+        self._instr(t, Op.JSR, self._require(MUL))
         self._free(left)
         self._free(right)
         self._setloc(t, Reg.A)
+
+    def start(self, t):
+        if self.required:
+            # if there are any required subroutines, they'll be added at the end
+            # of the code, separate them for previous code with a BRK
+            # instruction
+            self._instr(t, Op.BRK)
+
+        for name, subroutine in self.required.items():
+            # add a global label at the subroutine start
+            self._instr(t, None, None, name)
+
+            # append the actual subroutine instructions
+            for instr in subroutine.code:
+                self._instr(t, *instr)
 
     def _push(self, reg=Reg.A):
         t = self.registers.get(reg)
@@ -232,7 +249,10 @@ class CodeGenerator(Visitor):
                 return int(s[1:], base=16)
             return int(s, base=10)
 
-        if arg is None:
+        if op is None:
+            # empty instruction, no mode
+            mode = None
+        elif arg is None:
             # no arg, argument is implied in the command
             mode = AddrMode.Implied
         elif isinstance(arg, str):
@@ -262,6 +282,9 @@ class CodeGenerator(Visitor):
                 # accumulator
                 arg = None
                 mode = AddrMode.Accumulator
+            elif GLOBAL_LABEL.match(arg):
+                # global label, use absolute addressing
+                mode = AddrMode.Absolute
         else:
             # arg is a tree node
             if arg.loc is None:
@@ -274,26 +297,31 @@ class CodeGenerator(Visitor):
                 mode = AddrMode.Zeropage
                 arg = arg.loc
 
-        if label is not None:
+        # if the label starts with '@' it's a placeholder, generate the actual
+        # string for it
+        if label is not None and label.startswith('@'):
             label = self._getlabel(t, label)
 
         code = getattr(t, 'code', [])
         code.append((op, mode, arg, label))
         setattr(t, 'code', code)
 
-        if mode in (AddrMode.Implied, AddrMode.Accumulator):
+        if op is None:
+            line = ''
+        elif mode in (AddrMode.Implied, AddrMode.Accumulator):
             line = op.value
         elif mode is AddrMode.Zeropage:
             line = f'{op.value} ${hex(arg)[2:]}'
         elif mode is AddrMode.Immediate:
             line = f'{op.value} #{hex(arg)[2:]}'
-        elif mode is AddrMode.Relative:
+        elif mode in (AddrMode.Relative, AddrMode.Absolute):
             line = f'{op.value} {arg}'
         else:
             raise NESQuikInternalError(t, f'unsupported addr mode {mode}')
 
-        line = (f'{label}:' if label else '') + '\t' + line
-        self.prg.asm.append(line)
+        line = ((f'{label}:' if label else '') + '\t' + line).strip()
+        if line:
+            self.prg.asm.append(line)
 
     def _getlabel(self, t, label):
         if not hasattr(t, 'labels'):
@@ -302,9 +330,13 @@ class CodeGenerator(Visitor):
         if label in t.labels:
             return t.labels[label]
 
-        label_id = f'{t.data}{next(self.label_counter)}'.upper()
+        label_id = f'_{t.data}{next(self.label_counter)}'
         t.labels[label] = label_id
         return label_id
+
+    def _require(self, subroutine):
+        self.required.setdefault(subroutine.name, subroutine)
+        return subroutine.name
 
 
 class OffsetInjector(Visitor):
@@ -322,7 +354,11 @@ class OffsetInjector(Visitor):
 
     def __default__(self, t):
         for i, (op, mode, arg, label) in enumerate(getattr(t, 'code', [])):
-            _, size = OPCODES[(op, mode)]
+            if op is not None:
+                _, size = OPCODES[(op, mode)]
+            else:
+                # empty instructions do not change the size
+                size = 0
 
             if self.phase is OffsetInjector.Phase.COMPUTE_OFFSETS:
                 if label is not None:
@@ -332,11 +368,24 @@ class OffsetInjector(Visitor):
                 # a label is found
                 try:
                     label_offset = self.labels[arg]
-                    offset = label_offset - self.offset
-                    if offset < 0:
-                        offset = 0x100 + (offset - 2)
+
+                    if mode is AddrMode.Relative:
+                        # in relative addressing, the argument is a displacement
+                        # from current instruction;
+                        # NOTE: the -2 below is for compensating the current
+                        # comparison instruction size
+                        offset = label_offset - self.offset
+                        if offset < 0:
+                            # negative displacements are specified as two's
+                            # complement signed numbers
+                            offset = 0x100 + (offset - 2)
+                        else:
+                            offset -= 2
                     else:
-                        offset -= 2
+                        # in absolute addressing, add the org address to the
+                        # offset
+                        offset = self.prg.org + label_offset
+
                     t.code[i] = (op, mode, offset, label)
 
                 except KeyError:
@@ -345,6 +394,8 @@ class OffsetInjector(Visitor):
             self.offset += size
 
     def start(self, t):
+        self.__default__(t)
+
         if self.phase is OffsetInjector.Phase.COMPUTE_OFFSETS:
             self.phase = OffsetInjector.Phase.INJECT_OFFSETS
             self.offset = 0
@@ -359,13 +410,28 @@ class Assembler(Visitor):
 
     def __default__(self, t):
         for op, mode, arg, _ in getattr(t, 'code', []):
-            opcode, size = OPCODES[(op, mode)]
-            if size > 2:
+            if op is None:
+                continue
+
+            try:
+                opcode, size = OPCODES[(op, mode)]
+            except KeyError:
                 raise NESQuikInternalError(t, 'unsupported operand size')
-            else:
-                self.prg.obj.append(opcode)
-                if arg is not None:
+
+            self.prg.obj.append(opcode)
+            if arg is not None:
+                if mode is AddrMode.Absolute and size == 3:
+                    # in absolute addressing, the address low part is coming
+                    # first, then the hi
+                    arg_hi = arg >> 8
+                    arg_lo = arg & 0xff
+                    self.prg.obj.append(arg_lo)
+                    self.prg.obj.append(arg_hi)
+                elif size == 2:
                     self.prg.obj.append(arg)
+
+            elif size != 1:
+                raise NESQuikInternalError(t, 'mismatching address mode and argument size')
 
 PASSES = [
     (VarsChecker, True),
@@ -375,8 +441,8 @@ PASSES = [
 ]
 
 
-def compile(ast):
-    prg = Program()
+def compile(ast, org=0xc000):
+    prg = Program(org)
 
     for cls, top_down in PASSES:
         v = cls(prg)

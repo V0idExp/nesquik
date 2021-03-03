@@ -12,12 +12,14 @@ class CPU(MPU):
     def compile_and_run(self, code):
         self.reset()
 
+        org = 0xc000
+
         ast = parse(code)
-        prg = compile(ast)
+        prg = compile(ast, org=org)
         obj = prg.obj
 
-        self.memory[0xc000:0xc000 + len(obj)] = obj
-        self.pc = 0xc000
+        self.memory[org:org + len(obj)] = obj
+        self.pc = org
 
         while not self.p & self.INTERRUPT:
             self.step()
