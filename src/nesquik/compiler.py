@@ -131,8 +131,10 @@ class CodeGenerator(Interpreter, Stage):
         left, right = t.children
 
         self._push(Reg.A)
-        self._pull(t, left, Reg.X)
-        self._pull(t, right, Reg.Y)
+        self._pull(t, left)
+        self._instr(t, Op.STA, '$0')
+        self._pull(t, right)
+        self._instr(t, Op.STA, '$1')
         self._instr(t, Op.JSR, self._require(MUL))
         self._setloc(t, Reg.A)
 

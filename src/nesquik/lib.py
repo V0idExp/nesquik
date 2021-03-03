@@ -32,29 +32,22 @@ def parse_instructions(code):
 
 
 # Multiplication subroutine.
-# X - first operand
-# Y - second operand
-# A - result
+# $0 - first operand
+# $1 - second operand
+# A  - result
+#
+# http://6502org.wikidot.com/software-math-intmul
 MUL = Subroutine(
     name='MUL',
     code=parse_instructions('''
-        lda #$00
-        sta $00
-    @0: tya
-        and #$01
-        beq @1
-        txa
+        ldx #8
+    @0: asl
+        asl $0
+        bcc @1
         clc
-        adc $00
-        sta $00
-    @1: txa
-        asl
-        tax
-        tya
-        lsr
-        tay
+        adc $1
+    @1: dex
         bne @0
-        lda $00
         rts
     '''))
 
