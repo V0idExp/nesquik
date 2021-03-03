@@ -319,8 +319,8 @@ class CodeGenerator(Visitor):
         else:
             raise NESQuikInternalError(t, f'unsupported addr mode {mode}')
 
-        line = ((f'{label}:' if label else '') + '\t' + line).strip()
-        if line:
+        line = ((f'{label}:' if label else '') + '\t' + line)
+        if line.strip():
             self.prg.asm.append(line)
 
     def _getlabel(self, t, label):
@@ -330,7 +330,7 @@ class CodeGenerator(Visitor):
         if label in t.labels:
             return t.labels[label]
 
-        label_id = f'_{t.data}{next(self.label_counter)}'
+        label_id = f'{t.data}{next(self.label_counter)}'
         t.labels[label] = label_id
         return label_id
 
