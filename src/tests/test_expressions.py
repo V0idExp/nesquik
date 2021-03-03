@@ -13,7 +13,11 @@ import pytest
     ('return 2 * 3 - 2 + 3', 7),
     ('return -3 * 2 + 3 * 3', 3),
     ('return -3 * (2 + 3) * 3', 211),
-    ('return (2 + 3) * (4 + 5)', 45)
+    ('return (2 + 3) * (4 + 5)', 45),
+    ('return 8 / 2', 4),
+    ('return 8 / 3', 2),
+    ('return (13 / 2) * (8 / 3)', 12),
+    ('return 4 / 5', 0),
 ])
 def test_expressions(cpu, code, exp_result):
     cpu.compile_and_run(code)

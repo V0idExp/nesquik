@@ -6,16 +6,20 @@ class Op(Enum):
     ADC = 'adc'
     AND = 'and'
     ASL = 'asl'
+    BCC = 'bcc'
     BEQ = 'beq'
     BNE = 'bne'
     BRK = 'brk'
     CLC = 'clc'
+    CMP = 'cmp'
+    DEX = 'dex'
     EOR = 'eor'
     JSR = 'jsr'
     LDA = 'lda'
     LDX = 'ldx'
     LDY = 'ldy'
     LSR = 'lsr'
+    ROL = 'rol'
     RTS = 'rts'
     SBC = 'sbc'
     SEC = 'sec'
@@ -45,11 +49,14 @@ OPCODES = {
     (Op.AND, AddrMode.Zeropage):    (0x25, 2),
     (Op.ASL, AddrMode.Implied):     (0x0A, 1),
     (Op.ASL, AddrMode.Zeropage):    (0x06, 2),
-    (Op.BEQ, AddrMode.Relative):    (0xD0, 2),
+    (Op.BCC, AddrMode.Relative):    (0x90, 2),
     (Op.BEQ, AddrMode.Relative):    (0xF0, 2),
     (Op.BNE, AddrMode.Relative):    (0xD0, 2),
     (Op.BRK, AddrMode.Implied):     (0x00, 1),
     (Op.CLC, AddrMode.Implied):     (0x18, 1),
+    (Op.CMP, AddrMode.Immediate):   (0xC9, 2),
+    (Op.CMP, AddrMode.Zeropage):    (0xC5, 2),
+    (Op.DEX, AddrMode.Implied):     (0xCA, 1),
     (Op.EOR, AddrMode.Immediate):   (0x49, 2),
     (Op.JSR, AddrMode.Absolute):    (0x20, 3),
     (Op.LDA, AddrMode.Immediate):   (0xA9, 2),
@@ -60,6 +67,8 @@ OPCODES = {
     (Op.LDY, AddrMode.Zeropage):    (0xA4, 2),
     (Op.LSR, AddrMode.Implied):     (0x4A, 1),
     (Op.LSR, AddrMode.Zeropage):    (0x46, 2),
+    (Op.ROL, AddrMode.Implied):     (0x2A, 1),
+    (Op.ROL, AddrMode.Zeropage):    (0x26, 2),
     (Op.RTS, AddrMode.Implied):     (0x60, 1),
     (Op.SBC, AddrMode.Immediate):   (0xE9, 2),
     (Op.SBC, AddrMode.Zeropage):    (0xE5, 2),

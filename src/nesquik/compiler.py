@@ -4,7 +4,7 @@ from itertools import count
 
 from lark.visitors import Interpreter
 
-from nesquik.lib import MUL
+from nesquik.lib import MUL, DIV
 from nesquik.opcodes import OPCODES, AddrMode, Op
 
 
@@ -115,8 +115,9 @@ class CodeGenerator(Interpreter, Stage):
         self.visit_children(t)
         arg = t.children[0]
 
-        self._push(Reg.A)
-        self._pull(t, arg)
+        if arg.loc is not Reg.A:
+            self._push(Reg.A)
+            self._pull(t, arg)
 
         # perform two's complement negation: invert all bits and add 1
         self._instr(t, Op.CLC)
@@ -135,6 +136,18 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.JSR, self._require(MUL))
         self._setloc(t, Reg.A)
 
+    def div(self, t):
+        self.visit_children(t)
+        left, right = t.children
+
+        self._push(Reg.A)
+        self._pull(t, left)
+        self._instr(t, Op.STA, '$0')
+        self._pull(t, right)
+        self._instr(t, Op.STA, '$1')
+        self._instr(t, Op.JSR, self._require(DIV))
+        self._setloc(t, Reg.A)
+
     def start(self, t):
         self.visit_children(t)
 
@@ -145,6 +158,7 @@ class CodeGenerator(Interpreter, Stage):
             self._instr(t, Op.BRK)
 
         for name, subroutine in self.required.items():
+            self._resetlabels(t)
             # add a global label at the subroutine start
             self._instr(t, None, None, name)
 
@@ -332,7 +346,7 @@ class CodeGenerator(Interpreter, Stage):
         elif mode is AddrMode.Zeropage:
             line = f'{op.value} ${hex(arg)[2:]}'
         elif mode is AddrMode.Immediate:
-            line = f'{op.value} #{hex(arg)[2:]}'
+            line = f'{op.value} #{arg}'
         elif mode in (AddrMode.Relative, AddrMode.Absolute):
             line = f'{op.value} {arg}'
         else:
@@ -349,9 +363,12 @@ class CodeGenerator(Interpreter, Stage):
         if label in t.labels:
             return t.labels[label]
 
-        label_id = f'{t.data}{next(self.label_counter)}'
+        label_id = f'L{next(self.label_counter)}'
         t.labels[label] = label_id
         return label_id
+
+    def _resetlabels(self, t):
+        setattr(t, 'labels', {})
 
     def _require(self, subroutine):
         self.required.setdefault(subroutine.name, subroutine)

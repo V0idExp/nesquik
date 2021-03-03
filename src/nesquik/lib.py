@@ -57,3 +57,27 @@ MUL = Subroutine(
         lda $00
         rts
     '''))
+
+
+# Division subroutine.
+# $0 - dividend
+# $1 - divisor
+# A  - result
+#
+# http://6502org.wikidot.com/software-math-intdiv
+DIV = Subroutine(
+    name='DIV',
+    code=parse_instructions('''
+        lda #0
+        ldx #8
+        asl $0
+    @0: rol
+        cmp $1
+        bcc @1
+        sbc $1
+    @1: rol $0
+        dex
+        bne @0
+        lda $0
+        rts
+    '''))
