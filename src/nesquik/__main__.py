@@ -29,7 +29,7 @@ class AddrType(click.ParamType):
 @click.argument('file', type=click.File('r'))
 @click.option('-o', '--out', type=click.File('wb'), required=False,
     help='Output binary file name')
-@click.option('--org', type=AddrType(), required=False, default=0xc000,
+@click.option('--org', type=AddrType(), required=False, default='0xc000',
     help='Program start address')
 def nq(file, out, org):
     code = file.read()
