@@ -43,6 +43,10 @@ class Reg(Enum):
     Y = 'Y'
 
 
+class StackOffset(int):
+    pass
+
+
 class Stage:
 
     def exec(self, prg: Program):
@@ -55,11 +59,12 @@ class CodeGenerator(Interpreter, Stage):
         super().__init__()
         self.prg = None
         self.registers = {}
-        self.addrtable = [None] * 0xff
         self.vars = {}
-        self.reserved = 2
+        self.reserved = 4
         self.label_counter = count()
         self.required = {}
+        self.stack_offset = 0
+        self.base_ptr = 0x02
 
     def exec(self, prg):
         self.prg = prg
@@ -78,13 +83,14 @@ class CodeGenerator(Interpreter, Stage):
         if left.loc is Reg.A:
             # if left operand is already in A, subtract the right
             self._instr(t, Op.SBC, right)
-            self._free(right)
         else:
             # load left to A and subtract the right
-            self._push(Reg.A)
+            self._push()
             self._pull(t, left)
+
+            if isinstance(right.loc, StackOffset):
+                self._ldy_offset(t, right)
             self._instr(t, Op.SBC, right)
-            self._free(right)
 
         self._setloc(t, Reg.A)
 
@@ -96,18 +102,21 @@ class CodeGenerator(Interpreter, Stage):
 
         if left.loc is Reg.A:
             # if left operand is already in A, add the right
+            if isinstance(right.loc, StackOffset):
+                self._ldy_offset(t, right)
             self._instr(t, Op.ADC, right)
-            self._free(right)
         elif right.loc is Reg.A:
             # if right operand is already in A, add the left
+            if isinstance(left.loc, StackOffset):
+                self._ldy_offset(t, left)
             self._instr(t, Op.ADC, left)
-            self._free(left)
         else:
             # none of the operands are in A, load left to A and add the right
-            self._push(Reg.A)
+            self._push()
             self._pull(t, left)
+            if isinstance(right.loc, StackOffset):
+                self._ldy_offset(t, right)
             self._instr(t, Op.ADC, right)
-            self._free(right)
 
         self._setloc(t, Reg.A)
 
@@ -116,7 +125,7 @@ class CodeGenerator(Interpreter, Stage):
         arg = t.children[0]
 
         if arg.loc is not Reg.A:
-            self._push(Reg.A)
+            self._push()
             self._pull(t, arg)
 
         # perform two's complement negation: invert all bits and add 1
@@ -130,7 +139,7 @@ class CodeGenerator(Interpreter, Stage):
         self.visit_children(t)
         left, right = t.children
 
-        self._push(Reg.A)
+        self._push()
         self._pull(t, left)
         self._instr(t, Op.STA, '$0')
         self._pull(t, right)
@@ -142,7 +151,7 @@ class CodeGenerator(Interpreter, Stage):
         self.visit_children(t)
         left, right = t.children
 
-        self._push(Reg.A)
+        self._push()
         self._pull(t, left)
         self._instr(t, Op.STA, '$0')
         self._pull(t, right)
@@ -151,7 +160,27 @@ class CodeGenerator(Interpreter, Stage):
         self._setloc(t, Reg.A)
 
     def start(self, t):
+        lo = hex(self.base_ptr)[2:]
+        hi = hex(self.base_ptr + 1)[2:]
+
+        # base pointer HI part is always 0
+        self._instr(t, Op.LDA, '#$00')
+        self._instr(t, Op.STA, f'${hi}')
+
+        # save current stack pointer
+        self._instr(t, Op.TSX)
+        self._instr(t, Op.TXA)
+        self._instr(t, Op.PHA)
+        self._instr(t, Op.STA, f'${lo}')
+
         self.visit_children(t)
+
+        # TODO: uncomment these when multiple stack frames are implemented
+        # restore stack pointer
+        # self._instr(t, Op.LDX, f'${lo}')
+        # self._instr(t, Op.TXS)
+        # self._instr(t, Op.PLA)
+        # self._instr(t, Op.STA, f'${lo}')
 
         if self.required:
             # if there are any required subroutines, they'll be added at the end
@@ -173,109 +202,80 @@ class CodeGenerator(Interpreter, Stage):
         name, expr = t.children
         name = name.value
 
-        if isinstance(expr.loc, int):
-            # expression already in memory, pin it there
-            self.vars[name] = expr.loc
-        else:
-            # if the expression is an immediate, load it into A
-            if expr.loc is None:
-                self._pull(t, expr, Reg.A)
+        self._pull(t, expr)
 
-            # expression in registers, allocate memory for it and store it there
-            loc = self._alloc(t)
-            self.vars[name] = loc
-            self._store(t, expr.loc, loc)
+        loc = self._getvar(name)
+        self._store(t, loc)
 
     def imm(self, t):
         self._setloc(t, None)
 
     def ref(self, t):
         name = t.children[0].value
+        self._setloc(t, self._getvar(name))
 
+    def var(self, t):
+        # on declaration, allocate memory for the variable and pin it in vars map
+        name = t.children[0].value
+        loc = self._alloc()
+        self.vars[name] = loc
+        self._setloc(t, loc)
+
+        if len(t.children) > 1:
+            # perform the assignment, if there's any initialization expression
+            self.assign(t)
+
+    def _getvar(self, name):
         try:
-            self._setloc(t, self.vars[name])
+            return self.vars[name]
         except KeyError:
-            raise NESQuikUndefinedVariable(f'undefined variable {name}')
+            raise NESQuikUndefinedVariable(f'use of undefined variable {name}')
 
-    def _alloc(self, t):
-        try:
-            return next(i for i in range(self.reserved, len(self.addrtable)) if self.addrtable[i] is None)
-        except StopIteration:
-            raise NESQuikInternalError(f'out of scratch memory')
+    def _alloc(self):
+        return self.reserved + len(self.vars) + 1
 
-    def _push(self, reg=Reg.A):
-        t = self.registers.get(reg)
-        if t is not None and not isinstance(t.loc, int):
-            i = self._alloc(t)
-            self._setloc(t, i)
-
-            op = {
-                Reg.A: Op.STA,
-                Reg.X: Op.STX,
-                Reg.Y: Op.STY
-            }[reg]
-            self._instr(t, op, t)
-
-    def _store(self, t, reg, loc):
-        v = self.registers[reg]
-        op = {
-            Reg.A: Op.STA,
-            Reg.X: Op.STX,
-            Reg.Y: Op.STY
-        }[reg]
+    def _store(self, t, loc):
+        v = self.registers[Reg.A]
         self._setloc(v, loc)
-        self._instr(t, op, v)
+        self._instr(t, Op.STA, v)
 
-    def _pull(self, t, arg, reg=Reg.A):
-        if arg.loc is reg:
+    def _ldy_offset(self, t, v):
+        if isinstance(v.loc, StackOffset):
+            self._instr(t, Op.LDY, f'#${hex(v.loc)[2:]}')
+
+    def _push(self):
+        t = self.registers.get(Reg.A)
+        if t is not None:
+            # Negative offsets relative to the base pointer rely on overflow
+            # when doing `(bp),Y` indirect addressing.
+            # For example, with base pointer located at $02 and pointing to $a0,
+            # to index a value 2 bytes higher in the stack (lower in memory), we
+            # do:
+            # ldy #$fe
+            # lda ($02),Y  ; $00a0 + $fe = $019e
+            offset = StackOffset(0xff + self.stack_offset)
+            self.stack_offset -= 1
+            self._setloc(t, offset)
+            self._instr(t, Op.PHA)
+
+    def _pull(self, t, arg):
+        if arg.loc is Reg.A:
             # do nothing, argument already in place
             return
-        elif isinstance(arg.loc, Reg):
-            # transfer register to register
-            tx_ops = {
-                (Reg.A, Reg.X): Op.TAX,
-                (Reg.A, Reg.Y): Op.TAY,
-                (Reg.X, Reg.A): Op.TXA,
-                (Reg.Y, Reg.A): Op.TYA,
-            }
-            try:
-                # try to move arg between X,Y and A
-                op = tx_ops[(arg.loc, reg)]
-                self._instr(t, op)
-            except KeyError:
-                # X <-> Y move, need to transfer via A
-                self._push(Reg.A)
-                if reg is Reg.X:
-                    self._instr(t, Op.TXA)
-                else:
-                    self._instr(t, Op.TYA)
-
-                op = tx_ops[(Reg.A, reg)]
-                self._instr(t, op)
+        elif isinstance(arg.loc, StackOffset):
+            # pick the value from the stack using indirect addressing
+            self._ldy_offset(t, arg)
+            self._instr(t, Op.LDA, arg)
         else:
             # either immediate or memory
-            op = {
-                Reg.A: Op.LDA,
-                Reg.X: Op.LDX,
-                Reg.Y: Op.LDY,
-            }[reg]
-            self._instr(t, op, arg)
+            self._instr(t, Op.LDA, arg)
 
-        self._setloc(arg, reg)
-
-    def _free(self, t):
-        if isinstance(t.loc, int) and not t.loc in self.vars.values():
-            self.addrtable[t.loc] = None
+        self._setloc(arg, Reg.A)
 
     def _setloc(self, t, loc):
-        if hasattr(t, 'loc'):
-            self._free(t)
-
         if isinstance(loc, Reg):
             # add to registers
             self.registers[loc] = t
-        elif isinstance(loc, int):
-            self.addrtable[loc] = t
 
         setattr(t, 'loc', loc)
 
@@ -315,10 +315,6 @@ class CodeGenerator(Interpreter, Stage):
                 # label placeholder
                 mode = AddrMode.Relative
                 arg = self._getlabel(t, arg)
-            elif arg == 'a':
-                # accumulator
-                arg = None
-                mode = AddrMode.Accumulator
             elif GLOBAL_LABEL.match(arg):
                 # global label, use absolute addressing
                 mode = AddrMode.Absolute
@@ -328,11 +324,15 @@ class CodeGenerator(Interpreter, Stage):
                 # not located anywhere, thus, an immediate
                 mode = AddrMode.Immediate
                 arg = parse_int(arg.children[0])
-            elif isinstance(arg.loc, int):
-                # memory location
-                # TODO: support for absolute addresses?
-                mode = AddrMode.Zeropage
-                arg = arg.loc
+            else:
+                if isinstance(arg.loc, StackOffset):
+                    mode = AddrMode.IndirectY
+                    arg = self.base_ptr
+                else:
+                    # memory location
+                    # TODO: support for absolute addresses?
+                    mode = AddrMode.Zeropage
+                    arg = arg.loc
 
         # if the label starts with '@' it's a placeholder, generate the actual
         # string for it
@@ -343,7 +343,7 @@ class CodeGenerator(Interpreter, Stage):
 
         if op is None:
             line = ''
-        elif mode in (AddrMode.Implied, AddrMode.Accumulator):
+        elif mode is AddrMode.Implied:
             line = op.value
         elif mode is AddrMode.Zeropage:
             line = f'{op.value} ${hex(arg)[2:]}'
@@ -351,6 +351,8 @@ class CodeGenerator(Interpreter, Stage):
             line = f'{op.value} #{arg}'
         elif mode in (AddrMode.Relative, AddrMode.Absolute):
             line = f'{op.value} {arg}'
+        elif mode is AddrMode.IndirectY:
+            line = f'{op.value} (${hex(arg)[2:]}),Y'
         else:
             raise NESQuikInternalError(f'unsupported addr mode {mode}')
 

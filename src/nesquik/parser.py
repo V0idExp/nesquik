@@ -3,7 +3,15 @@ from lark import Lark
 
 
 _grammar = r'''
-    start: (_statement|COMMENT|NEWLINE)*
+    start: _var_list _statement_list
+
+    _var_list: (_var_decl|COMMENT|NEWLINE)*
+
+    var: NAME ["=" expression]
+
+    _var_decl: "var" var ("," var)*
+
+    _statement_list: (_statement|COMMENT|NEWLINE)*
 
     _statement: assign
               | ret
@@ -40,6 +48,7 @@ _grammar = r'''
 
     %ignore WS_INLINE
     %ignore COMMENT
+    %ignore NEWLINE
 '''
 
 

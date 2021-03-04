@@ -33,8 +33,6 @@ class AddrType(click.ParamType):
     help='Program start address')
 def nq(file, out, org):
     code = file.read()
-    print(code)
-
     ast = parse(code)
     print(ast.pretty())
 

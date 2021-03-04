@@ -19,6 +19,8 @@ class Op(Enum):
     LDX = 'ldx'
     LDY = 'ldy'
     LSR = 'lsr'
+    PHA = 'pha'
+    PLA = 'pla'
     ROL = 'rol'
     RTS = 'rts'
     SBC = 'sbc'
@@ -28,7 +30,9 @@ class Op(Enum):
     STY = 'sty'
     TAX = 'tax'
     TAY = 'tay'
+    TSX = 'tsx'
     TXA = 'txa'
+    TXS = 'txs'
     TYA = 'tya'
 
 
@@ -38,12 +42,13 @@ class AddrMode(Enum):
     Zeropage = 'zp'
     Absolute = 'abs'
     Relative = 'rel'
-    Accumulator = 'acc'
+    IndirectY = 'iny'
 
 
 OPCODES = {
 #    Op      Address mode            Code  Size
     (Op.ADC, AddrMode.Immediate):   (0x69, 2),
+    (Op.ADC, AddrMode.IndirectY):   (0x71, 2),
     (Op.ADC, AddrMode.Zeropage):    (0x65, 2),
     (Op.AND, AddrMode.Immediate):   (0x29, 2),
     (Op.AND, AddrMode.Zeropage):    (0x25, 2),
@@ -60,6 +65,7 @@ OPCODES = {
     (Op.EOR, AddrMode.Immediate):   (0x49, 2),
     (Op.JSR, AddrMode.Absolute):    (0x20, 3),
     (Op.LDA, AddrMode.Immediate):   (0xA9, 2),
+    (Op.LDA, AddrMode.IndirectY):   (0xB1, 2),
     (Op.LDA, AddrMode.Zeropage):    (0xA5, 2),
     (Op.LDX, AddrMode.Immediate):   (0xA2, 2),
     (Op.LDX, AddrMode.Zeropage):    (0xA6, 2),
@@ -67,10 +73,13 @@ OPCODES = {
     (Op.LDY, AddrMode.Zeropage):    (0xA4, 2),
     (Op.LSR, AddrMode.Implied):     (0x4A, 1),
     (Op.LSR, AddrMode.Zeropage):    (0x46, 2),
+    (Op.PHA, AddrMode.Implied):     (0x48, 1),
+    (Op.PLA, AddrMode.Implied):     (0x68, 1),
     (Op.ROL, AddrMode.Implied):     (0x2A, 1),
     (Op.ROL, AddrMode.Zeropage):    (0x26, 2),
     (Op.RTS, AddrMode.Implied):     (0x60, 1),
     (Op.SBC, AddrMode.Immediate):   (0xE9, 2),
+    (Op.SBC, AddrMode.IndirectY):   (0xF1, 2),
     (Op.SBC, AddrMode.Zeropage):    (0xE5, 2),
     (Op.SEC, AddrMode.Implied):     (0x38, 1),
     (Op.STA, AddrMode.Zeropage):    (0x85, 2),
@@ -78,7 +87,9 @@ OPCODES = {
     (Op.STY, AddrMode.Zeropage):    (0x84, 2),
     (Op.TAX, AddrMode.Implied):     (0xAA, 1),
     (Op.TAY, AddrMode.Implied):     (0xA8, 1),
+    (Op.TSX, AddrMode.Implied):     (0xBA, 1),
     (Op.TXA, AddrMode.Implied):     (0x8A, 1),
+    (Op.TXS, AddrMode.Implied):     (0x9A, 1),
     (Op.TYA, AddrMode.Implied):     (0x98, 1),
 }
 
