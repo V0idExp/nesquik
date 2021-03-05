@@ -1,20 +1,30 @@
 from pprint import pprint
+
 from lark import Lark
+from lark.indenter import Indenter
 
 
 _grammar = r'''
     start: _var_list _statement_list
 
-    _var_list: (_var_decl|COMMENT|NEWLINE)*
+    _var_list: (_var_decl|COMMENT|_NL)*
 
     var: NAME ["=" expression]
 
     _var_decl: "var" var ("," var)*
 
-    _statement_list: (_statement|COMMENT|NEWLINE)*
+    _statement_list: (_statement|COMMENT|_NL)*
 
-    _statement: assign
+    _statement: if_stmt
+              | assign
               | ret
+
+    _block: _NL _INDENT _statement_list _DEDENT
+
+    if_stmt: if_branch elif_branch* else_branch?
+    if_branch: "if" expression ":" _block
+    elif_branch: "elif" expression ":" _block
+    else_branch: "else" ":" _block
 
     assign: NAME "=" expression
 
@@ -48,20 +58,33 @@ _grammar = r'''
 
     HEXINT: "$" HEXDIGIT+
 
+    _NL: /(\r?\n[\t ]*)+/
+
     %import common.CNAME -> NAME
     %import common.INT
     %import common.WS_INLINE
-    %import common.NEWLINE
     %import common.HEXDIGIT
     %import common.SH_COMMENT -> COMMENT
 
     %ignore WS_INLINE
     %ignore COMMENT
-    %ignore NEWLINE
+
+    %declare _INDENT
+    %declare _DEDENT
 '''
 
 
-_parser = Lark(_grammar, parser='lalr', propagate_positions=True)
+class TreeIndenter(Indenter):
+
+    NL_type = '_NL'
+    OPEN_PAREN_types = []
+    CLOSE_PAREN_types = []
+    INDENT_type = '_INDENT'
+    DEDENT_type = '_DEDENT'
+    tab_len = 4
+
+
+_parser = Lark(_grammar, parser='lalr', propagate_positions=True, postlex=TreeIndenter(), debug=True)
 
 
 def parse(code, transforms=None):

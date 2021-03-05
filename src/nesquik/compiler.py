@@ -210,6 +210,45 @@ class CodeGenerator(Interpreter, Stage):
         left, right = t.children
         self._gt(t, right, left)
 
+    def if_stmt(self, t):
+        for i, stmt in enumerate(t.children):
+            is_last = i == len(t.children) - 1
+
+            if len(stmt.children) > 1:
+                # `if` and `elif` have expressions
+                expr, block = stmt.children
+            else:
+                # `else` does not
+                expr, block = None, stmt.children[0]
+
+            if i > 0:
+                # set an enter label for the block, if not `if`
+                self._instr(t, None, None, f'@{i}')
+
+            if expr is not None:
+                self.visit(expr)
+
+                # evaluate the expression, which is already in A, since the
+                # previously performed comparison result is stored in A
+                self._instr(t, Op.CMP, '#1')
+
+                if is_last:
+                    # branch to the end
+                    self._instr(t, Op.BNE, f'@0')
+                else:
+                    # branch to next block, if there's any
+                    self._instr(t, Op.BNE, f'@{i + 1}')
+
+            # the actual branch body
+            self.visit(block)
+
+            # jump to the end after body execution
+            if not is_last:
+                self._instr(t, Op.JMP, '@0')
+
+        # end label
+        self._instr(t, None, None, '@0')
+
     def start(self, t):
         lo = hex(self.base_ptr)[2:]
         hi = hex(self.base_ptr + 1)[2:]
@@ -387,7 +426,10 @@ class CodeGenerator(Interpreter, Stage):
                     mode = AddrMode.Absolute
             elif arg.startswith('@'):
                 # label placeholder
-                mode = AddrMode.Relative
+                if op is Op.JMP:
+                    mode = AddrMode.Absolute
+                else:
+                    mode = AddrMode.Relative
                 arg = self._getlabel(t, arg)
             elif GLOBAL_LABEL.match(arg):
                 # global label, use absolute addressing

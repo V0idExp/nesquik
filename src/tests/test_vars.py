@@ -1,6 +1,7 @@
 import pytest
 from nesquik.compiler import NESQuikUndefinedVariable
 
+
 @pytest.mark.parametrize('code, exp_result', [
     (
         '''
@@ -39,6 +40,7 @@ from nesquik.compiler import NESQuikUndefinedVariable
     ),
 ])
 def test_vars(cpu, code, exp_result):
+    code = '\n'.join(line.strip() for line in code.split('\n'))
     cpu.compile_and_run(code)
     assert cpu.a == exp_result
 
@@ -58,6 +60,7 @@ def test_vars(cpu, code, exp_result):
     ''',
 ])
 def test_undefined_vars(cpu, code):
+    code = '\n'.join(line.strip() for line in code.split('\n'))
     with pytest.raises(NESQuikUndefinedVariable):
         cpu.compile_and_run(code)
 
