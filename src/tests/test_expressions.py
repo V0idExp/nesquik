@@ -18,6 +18,19 @@ import pytest
     ('return 8 / 3', 2),
     ('return (13 / 2) * (8 / 3)', 12),
     ('return 4 / 5', 0),
+    ('return 5 != 6', 1),
+    ('return 5 < 6', 1),
+    ('return 5 <= 6', 1),
+    ('return 5 == 6', 0),
+    ('return 5 > 6', 0),
+    ('return 5 >= 6', 0),
+    ('return 6 != 5', 1),
+    ('return 6 > 5', 1),
+    ('return 6 >= 5', 1),
+    ('return 6 == 5', 0),
+    ('return 6 <= 5', 0),
+    ('return 6 < 5', 0),
+    ('return ((2 == 2) + (0 == (3 > 3))) == 2', 1)
 ])
 def test_expressions(cpu, code, exp_result):
     cpu.compile_and_run(code)

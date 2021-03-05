@@ -20,20 +20,29 @@ _grammar = r'''
 
     ret: "return" expression
 
-    ?expression: term | binop
+    ?expression: term
+               | cmp
+               | binop
 
-    ?binop: expression "+" term -> add
-          | expression "-" term -> sub
+    ?cmp: expression ">" expression     -> gt
+        | expression ">=" expression    -> geq
+        | expression "<" expression     -> lt
+        | expression "<=" expression    -> leq
+        | expression "==" expression    -> eq
+        | expression "!=" expression    -> neq
 
-    ?term: factor "*" term      -> mul
-         | factor "/" term      -> div
+    ?binop: expression "+" term         -> add
+          | expression "-" term         -> sub
+
+    ?term: factor "*" term              -> mul
+         | factor "/" term              -> div
          | factor
 
-    ?unop: "-" factor           -> neg
+    ?unop: "-" factor                   -> neg
 
-    ?factor: NAME               -> ref
-           | HEXINT             -> imm
-           | INT                -> imm
+    ?factor: NAME                       -> ref
+           | HEXINT                     -> imm
+           | INT                        -> imm
            | "(" expression ")"
            | unop
 

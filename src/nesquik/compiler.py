@@ -159,6 +159,57 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.JSR, self._require(DIV))
         self._setloc(t, Reg.A)
 
+    def eq(self, t):
+        self.visit_children(t)
+        left, right = t.children
+
+        if right.loc is Reg.A:
+            self._cmp(t, right, left)
+        else:
+            self._cmp(t, left, right)
+        self._instr(t, Op.BEQ, '@0')
+        self._instr(t, Op.LDA, '#0')
+        self._instr(t, Op.BEQ, '@1')
+        self._instr(t, Op.LDA, '#1', '@0')
+        self._instr(t, None, None, '@1')
+        self._setloc(t, Reg.A)
+
+    def neq(self, t):
+        self.visit_children(t)
+        left, right = t.children
+
+        if right.loc is Reg.A:
+            self._cmp(t, right, left)
+        else:
+            self._cmp(t, left, right)
+        self._instr(t, Op.CMP, right)
+        self._instr(t, Op.BNE, '@0')
+        self._instr(t, Op.LDA, '#0')
+        self._instr(t, Op.BNE, '@1')
+        self._instr(t, Op.LDA, '#1', '@0')
+        self._instr(t, None, None, '@1')
+        self._setloc(t, Reg.A)
+
+    def geq(self, t):
+        self.visit_children(t)
+        left, right = t.children
+        self._geq(t, left, right)
+
+    def leq(self, t):
+        self.visit_children(t)
+        left, right = t.children
+        self._geq(t, right, left)
+
+    def gt(self, t):
+        self.visit_children(t)
+        left, right = t.children
+        self._gt(t, left, right)
+
+    def lt(self, t):
+        self.visit_children(t)
+        left, right = t.children
+        self._gt(t, right, left)
+
     def start(self, t):
         lo = hex(self.base_ptr)[2:]
         hi = hex(self.base_ptr + 1)[2:]
@@ -224,6 +275,29 @@ class CodeGenerator(Interpreter, Stage):
         if len(t.children) > 1:
             # perform the assignment, if there's any initialization expression
             self.assign(t)
+
+    def _cmp(self, t, left, right):
+        self._push()
+        self._pull(t, left)
+        if isinstance(right.loc, StackOffset):
+            self._ldy_offset(t, right)
+        self._instr(t, Op.CMP, right)
+
+    def _gt(self, t, left, right):
+        self._cmp(t, left, right)
+        self._instr(t, Op.BCC, '@0')
+        self._instr(t, Op.BEQ, '@0')
+        self._instr(t, Op.LDA, '#1')
+        self._instr(t, Op.BNE, '@1')
+        self._instr(t, Op.LDA, '#0', '@0')
+        self._instr(t, None, None, '@1')
+        self._setloc(t, Reg.A)
+
+    def _geq(self, t, left, right):
+        self._cmp(t, left, right)
+        self._instr(t, Op.LDA, '#0')
+        self._instr(t, Op.ADC, '#0')
+        self._setloc(t, Reg.A)
 
     def _getvar(self, name):
         try:
