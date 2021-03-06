@@ -75,58 +75,40 @@ class CodeGenerator(Interpreter, Stage):
         self._pull(t, t.children[0])
 
     def sub(self, t):
-        self.visit_children(t)
         left, right = t.children
 
+        self.visit(right)
+        self._pull(t, right)
+        self._push(t)
+
+        self.visit(left)
+        self._pull(t, left)
+
         self._instr(t, Op.SEC)
-
-        if left.loc is Reg.A:
-            # if left operand is already in A, subtract the right
-            self._instr(t, Op.SBC, right)
-        else:
-            # load left to A and subtract the right
-            self._push()
-            self._pull(t, left)
-
-            if isinstance(right.loc, StackOffset):
-                self._ldy_offset(t, right)
-            self._instr(t, Op.SBC, right)
-
+        self._ldy_offset(t, right)
+        self._instr(t, Op.SBC, right)
         self._setloc(t, Reg.A)
 
     def add(self, t):
-        self.visit_children(t)
         left, right = t.children
 
-        self._instr(t, Op.CLC)
-
+        self.visit(left)
         if left.loc is Reg.A:
-            # if left operand is already in A, add the right
-            if isinstance(right.loc, StackOffset):
-                self._ldy_offset(t, right)
-            self._instr(t, Op.ADC, right)
-        elif right.loc is Reg.A:
-            # if right operand is already in A, add the left
-            if isinstance(left.loc, StackOffset):
-                self._ldy_offset(t, left)
-            self._instr(t, Op.ADC, left)
-        else:
-            # none of the operands are in A, load left to A and add the right
-            self._push()
-            self._pull(t, left)
-            if isinstance(right.loc, StackOffset):
-                self._ldy_offset(t, right)
-            self._instr(t, Op.ADC, right)
+            self._push(t)
 
+        self.visit(right)
+        self._pull(t, right)
+
+        self._instr(t, Op.CLC)
+        if isinstance(left.loc, StackOffset):
+            self._ldy_offset(t, left)
+        self._instr(t, Op.ADC, left)
         self._setloc(t, Reg.A)
 
     def neg(self, t):
-        self.visit_children(t)
         arg = t.children[0]
-
-        if arg.loc is not Reg.A:
-            self._push()
-            self._pull(t, arg)
+        self.visit(arg)
+        self._pull(t, arg)
 
         # perform two's complement negation: invert all bits and add 1
         self._instr(t, Op.CLC)
@@ -136,37 +118,44 @@ class CodeGenerator(Interpreter, Stage):
         self._setloc(t, Reg.A)
 
     def mul(self, t):
-        self.visit_children(t)
         left, right = t.children
 
-        self._push()
-        self._pull(t, left)
-        self._instr(t, Op.STA, '$0')
+        self.visit(left)
+        if left.loc is Reg.A:
+            self._push(t)
+
+        self.visit(right)
         self._pull(t, right)
+        self._instr(t, Op.STA, '$0')
+
+        self._pull(t, left)
         self._instr(t, Op.STA, '$1')
+
         self._instr(t, Op.JSR, self._require(MUL))
         self._setloc(t, Reg.A)
 
     def div(self, t):
-        self.visit_children(t)
         left, right = t.children
 
-        self._push()
+        self.visit(right)
+        if right.loc is Reg.A:
+            self._push(t)
+
+        self.visit(left)
         self._pull(t, left)
         self._instr(t, Op.STA, '$0')
+
         self._pull(t, right)
         self._instr(t, Op.STA, '$1')
+
         self._instr(t, Op.JSR, self._require(DIV))
         self._setloc(t, Reg.A)
 
     def eq(self, t):
-        self.visit_children(t)
+        # TODO: try to swap the operands if one of them is supposed to be
+        # already in A
         left, right = t.children
-
-        if right.loc is Reg.A:
-            self._cmp(t, right, left)
-        else:
-            self._cmp(t, left, right)
+        self._cmp(t, left, right)
         self._instr(t, Op.BEQ, '@0')
         self._instr(t, Op.LDA, '#0')
         self._instr(t, Op.BEQ, '@1')
@@ -175,13 +164,10 @@ class CodeGenerator(Interpreter, Stage):
         self._setloc(t, Reg.A)
 
     def neq(self, t):
-        self.visit_children(t)
+        # TODO: try to swap the operands if one of them is supposed to be
+        # already in A
         left, right = t.children
-
-        if right.loc is Reg.A:
-            self._cmp(t, right, left)
-        else:
-            self._cmp(t, left, right)
+        self._cmp(t, left, right)
         self._instr(t, Op.CMP, right)
         self._instr(t, Op.BNE, '@0')
         self._instr(t, Op.LDA, '#0')
@@ -191,22 +177,18 @@ class CodeGenerator(Interpreter, Stage):
         self._setloc(t, Reg.A)
 
     def geq(self, t):
-        self.visit_children(t)
         left, right = t.children
         self._geq(t, left, right)
 
     def leq(self, t):
-        self.visit_children(t)
         left, right = t.children
         self._geq(t, right, left)
 
     def gt(self, t):
-        self.visit_children(t)
         left, right = t.children
         self._gt(t, left, right)
 
     def lt(self, t):
-        self.visit_children(t)
         left, right = t.children
         self._gt(t, right, left)
 
@@ -261,6 +243,7 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.TXA)
         self._instr(t, Op.PHA)
         self._instr(t, Op.STA, f'${lo}')
+        self._instr(t, None, None, 'start')
 
         self.visit_children(t)
 
@@ -287,10 +270,10 @@ class CodeGenerator(Interpreter, Stage):
                 self._instr(t, *instr)
 
     def assign(self, t):
-        self.visit_children(t)
         name, expr = t.children
         name = name.value
 
+        self.visit(expr)
         self._pull(t, expr)
 
         loc = self._getvar(name)
@@ -323,9 +306,13 @@ class CodeGenerator(Interpreter, Stage):
             self.assign(t)
 
     def _cmp(self, t, left, right):
-        if left.loc is not Reg.A:
-            self._push()
-            self._pull(t, left)
+        self.visit(right)
+        if right.loc is Reg.A:
+            self._push(t)
+
+        self.visit(left)
+        self._pull(t, left)
+
         if isinstance(right.loc, StackOffset):
             self._ldy_offset(t, right)
 
@@ -369,20 +356,26 @@ class CodeGenerator(Interpreter, Stage):
         if isinstance(v.loc, StackOffset):
             self._instr(t, Op.LDY, f'#${hex(v.loc)[2:]}')
 
-    def _push(self):
-        t = self.registers.get(Reg.A)
-        if t is not None:
-            # Negative offsets relative to the base pointer rely on overflow
-            # when doing `(bp),Y` indirect addressing.
-            # For example, with base pointer located at $02 and pointing to $a0,
-            # to index a value 2 bytes higher in the stack (lower in memory), we
-            # do:
-            # ldy #$fe
-            # lda ($02),Y  ; $00a0 + $fe = $019e
-            offset = StackOffset(0xff + self.stack_offset)
-            self.stack_offset -= 1
-            self._setloc(t, offset)
-            self._instr(t, Op.PHA)
+    def _push(self, t):
+        v = self.registers.get(Reg.A)
+        if v is not None:
+            if v.data == 'ref' or v.data == 'var':
+                # do not push on stack refs to variables, since they're already
+                # in memory
+                name = v.children[0].value
+                self._setloc(v, self._getvar(name))
+            else:
+                # Negative offsets relative to the base pointer rely on overflow
+                # when doing `(bp),Y` indirect addressing.
+                # For example, with base pointer located at $02 and pointing to $a0,
+                # to index a value 2 bytes higher in the stack (lower in memory), we
+                # do:
+                # ldy #$fe
+                # lda ($02),Y  ; $00a0 + $fe = $019e
+                offset = StackOffset(0xff + self.stack_offset)
+                self.stack_offset -= 1
+                self._setloc(v, offset)
+                self._instr(t, Op.PHA)
 
     def _pull(self, t, arg):
         if arg.loc is Reg.A:

@@ -38,6 +38,54 @@ from nesquik.compiler import NESQuikUndefinedVariable
         ''',
         25,
     ),
+    (
+        '''
+        var a = 5
+        var b = 6
+        return (a + (a == a)) == b
+        ''',
+        1,
+    ),
+    (
+        '''
+        var a = 5
+        var b = 6
+        return a > b
+        ''',
+        0,
+    ),
+    (
+        '''
+        var a = 5
+        var b = 6
+        return a < b
+        ''',
+        1,
+    ),
+    (
+        '''
+        var a = 5
+        var b = 6
+        return a == b
+        ''',
+        0,
+    ),
+    (
+        '''
+        var a = 5
+        var b = 6
+        return a <= b
+        ''',
+        1,
+    ),
+    (
+        '''
+        var a = 5
+        var b = 6
+        return b >= a
+        ''',
+        1,
+    )
 ])
 def test_vars(cpu, code, exp_result):
     code = '\n'.join(line.strip() for line in code.split('\n'))
