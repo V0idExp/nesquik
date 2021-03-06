@@ -296,13 +296,21 @@ class CodeGenerator(Interpreter, Stage):
 
         loc = self._getvar(name)
         self._store(t, loc)
+        self.registers[Reg.A] = t
 
     def imm(self, t):
         self._setloc(t, None)
 
     def ref(self, t):
         name = t.children[0].value
-        self._setloc(t, self._getvar(name))
+        loc = self._getvar(name)
+
+        # check whether the associated variable is already in the registers
+        reg_t = self.registers.get(Reg.A)
+        if reg_t.data == 'var' and not isinstance(reg_t.loc, StackOffset) and reg_t.loc == loc:
+            self._setloc(t, Reg.A)
+        else:
+            self._setloc(t, loc)
 
     def var(self, t):
         # on declaration, allocate memory for the variable and pin it in vars map
@@ -316,10 +324,12 @@ class CodeGenerator(Interpreter, Stage):
             self.assign(t)
 
     def _cmp(self, t, left, right):
+        if left.loc is not Reg.A:
         self._push()
         self._pull(t, left)
         if isinstance(right.loc, StackOffset):
             self._ldy_offset(t, right)
+
         self._instr(t, Op.CMP, right)
 
     def _gt(self, t, left, right):
