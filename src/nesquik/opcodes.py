@@ -15,6 +15,7 @@ class Op(Enum):
     CMP = 'cmp'
     DEX = 'dex'
     EOR = 'eor'
+    INX = 'inx'
     JMP = 'jmp'
     JSR = 'jsr'
     LDA = 'lda'
@@ -67,6 +68,7 @@ OPCODES = {
     (Op.CMP, AddrMode.Zeropage):    (0xC5, 2),
     (Op.DEX, AddrMode.Implied):     (0xCA, 1),
     (Op.EOR, AddrMode.Immediate):   (0x49, 2),
+    (Op.INX, AddrMode.Implied):     (0xE8, 1),
     (Op.JMP, AddrMode.Absolute):    (0x4C, 3),
     (Op.JSR, AddrMode.Absolute):    (0x20, 3),
     (Op.LDA, AddrMode.Immediate):   (0xA9, 2),

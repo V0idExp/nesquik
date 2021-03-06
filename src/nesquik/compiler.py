@@ -63,7 +63,7 @@ class CodeGenerator(Interpreter, Stage):
         self.reserved = 4
         self.label_counter = count()
         self.required = {}
-        self.stack_offset = 0
+        self.scope_offsets = [0]
         self.base_ptr = 0x02
 
     def exec(self, prg):
@@ -78,8 +78,8 @@ class CodeGenerator(Interpreter, Stage):
         left, right = t.children
 
         self.visit(right)
-        self._pull(t, right)
-        self._push(t)
+        if right.loc is Reg.A:
+            self._push(t)
 
         self.visit(left)
         self._pull(t, left)
@@ -193,42 +193,64 @@ class CodeGenerator(Interpreter, Stage):
         self._gt(t, right, left)
 
     def if_stmt(self, t):
+        # local labels counter
+        c = count(0)
+        end_label = f'@{next(c)}'
+
         for i, stmt in enumerate(t.children):
             is_last = i == len(t.children) - 1
 
-            if len(stmt.children) > 1:
-                # `if` and `elif` have expressions
+            branch_i, true_i = next(c), next(c)
+
+            # label for the branch itself
+            branch_lbl = f'@{branch_i}'
+
+            # label for true condition
+            true_lbl = f'@{true_i}'
+
+            # label for false condition, matches the branch_lbl of the next loop;
+            # note that `c` does not advance
+            false_lbl = f'@{true_i + 1}'
+
+            # set a label for the current branch, to which the previous (if any)
+            # would jump in case its expression evaluates to false
+            self._instr(t, None, None, branch_lbl)
+
+            if stmt.data != 'else_branch':
+                # `if` and `elif` have expressions and a body
                 expr, block = stmt.children
             else:
-                # `else` does not
+                # `else` has only a body
                 expr, block = None, stmt.children[0]
 
-            if i > 0:
-                # set an enter label for the block, to which the previous block
-                # would jump in case its expression evaluates to false
-                self._instr(t, None, None, f'@{i}')
-
             if expr is not None:
-                # evaluate the condition expression
+                # perform expression evaluation in it's own scope
+                self._push_scope(t)
                 self.visit(expr)
+                self._pop_scope(t)
 
-                # the result is in A, if it's zero, go to the next block
+                # expression result comparison
+                self._instr(t, Op.CMP, '#0')
+
+                # branch to either the body or jump to the next block
+                self._instr(t, Op.BNE, true_lbl)
                 if is_last:
-                    # branch to the end
-                    self._instr(t, Op.BEQ, f'@0')
+                    self._instr(t, Op.JMP, end_label)
                 else:
-                    # branch to next block, if there's any
-                    self._instr(t, Op.BEQ, f'@{i + 1}')
+                    self._instr(t, Op.JMP, false_lbl)
 
             # the actual branch body
+            self._instr(t, None, None, true_lbl)
+            self._push_scope(t)
             self.visit(block)
+            self._pop_scope(t)
 
             # jump to the end after body execution
             if not is_last:
-                self._instr(t, Op.JMP, '@0')
+                self._instr(t, Op.JMP, end_label)
 
         # end label
-        self._instr(t, None, None, '@0')
+        self._instr(t, None, None, end_label)
 
     def start(self, t):
         lo = hex(self.base_ptr)[2:]
@@ -365,6 +387,9 @@ class CodeGenerator(Interpreter, Stage):
                 name = v.children[0].value
                 self._setloc(v, self._getvar(name))
             else:
+                # use the current scope's stack offset
+                stack_offset = self.scope_offsets[-1]
+
                 # Negative offsets relative to the base pointer rely on overflow
                 # when doing `(bp),Y` indirect addressing.
                 # For example, with base pointer located at $02 and pointing to $a0,
@@ -372,8 +397,11 @@ class CodeGenerator(Interpreter, Stage):
                 # do:
                 # ldy #$fe
                 # lda ($02),Y  ; $00a0 + $fe = $019e
-                offset = StackOffset(0xff + self.stack_offset)
-                self.stack_offset -= 1
+                offset = StackOffset(0xff + stack_offset)
+
+                # decrease the stack offset
+                self.scope_offsets[-1] -= 1
+
                 self._setloc(v, offset)
                 self._instr(t, Op.PHA)
 
@@ -390,6 +418,22 @@ class CodeGenerator(Interpreter, Stage):
             self._instr(t, Op.LDA, arg)
 
         self._setloc(arg, Reg.A)
+
+    def _push_scope(self, t):
+        self.scope_offsets.append(self.scope_offsets[-1])
+
+    def _pop_scope(self, t):
+        # if the stack offset changed in relation to previous scope during
+        # condition expression evaluation, pop the inserted elements from the
+        # stack
+        pop_count = abs(self.scope_offsets[-1] - self.scope_offsets[-2])
+        if pop_count > 0:
+            self._instr(t, Op.TSX)
+            for _ in range(pop_count):
+                self._instr(t, Op.INX)
+            self._instr(t, Op.TXS)
+
+        self.scope_offsets.pop(-1)
 
     def _setloc(self, t, loc):
         if isinstance(loc, Reg):
