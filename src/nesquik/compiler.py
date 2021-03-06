@@ -222,22 +222,21 @@ class CodeGenerator(Interpreter, Stage):
                 expr, block = None, stmt.children[0]
 
             if i > 0:
-                # set an enter label for the block, if not `if`
+                # set an enter label for the block, to which the previous block
+                # would jump in case its expression evaluates to false
                 self._instr(t, None, None, f'@{i}')
 
             if expr is not None:
+                # evaluate the condition expression
                 self.visit(expr)
 
-                # evaluate the expression, which is already in A, since the
-                # previously performed comparison result is stored in A
-                self._instr(t, Op.CMP, '#1')
-
+                # the result is in A, if it's zero, go to the next block
                 if is_last:
                     # branch to the end
-                    self._instr(t, Op.BNE, f'@0')
+                    self._instr(t, Op.BEQ, f'@0')
                 else:
                     # branch to next block, if there's any
-                    self._instr(t, Op.BNE, f'@{i + 1}')
+                    self._instr(t, Op.BEQ, f'@{i + 1}')
 
             # the actual branch body
             self.visit(block)
@@ -325,8 +324,8 @@ class CodeGenerator(Interpreter, Stage):
 
     def _cmp(self, t, left, right):
         if left.loc is not Reg.A:
-        self._push()
-        self._pull(t, left)
+            self._push()
+            self._pull(t, left)
         if isinstance(right.loc, StackOffset):
             self._ldy_offset(t, right)
 
@@ -344,8 +343,12 @@ class CodeGenerator(Interpreter, Stage):
 
     def _geq(self, t, left, right):
         self._cmp(t, left, right)
+        self._instr(t, Op.BCS, '@0')
+        self._instr(t, Op.BEQ, '@0')
         self._instr(t, Op.LDA, '#0')
-        self._instr(t, Op.ADC, '#0')
+        self._instr(t, Op.BEQ, '@1')
+        self._instr(t, Op.LDA, '#1', '@0')
+        self._instr(t, None, None, '@1')
         self._setloc(t, Reg.A)
 
     def _getvar(self, name):

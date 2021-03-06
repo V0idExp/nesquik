@@ -7,6 +7,7 @@ class Op(Enum):
     AND = 'and'
     ASL = 'asl'
     BCC = 'bcc'
+    BCS = 'bcs'
     BEQ = 'beq'
     BNE = 'bne'
     BRK = 'brk'
@@ -56,6 +57,7 @@ OPCODES = {
     (Op.ASL, AddrMode.Implied):     (0x0A, 1),
     (Op.ASL, AddrMode.Zeropage):    (0x06, 2),
     (Op.BCC, AddrMode.Relative):    (0x90, 2),
+    (Op.BCS, AddrMode.Relative):    (0xB0, 2),
     (Op.BEQ, AddrMode.Relative):    (0xF0, 2),
     (Op.BNE, AddrMode.Relative):    (0xD0, 2),
     (Op.BRK, AddrMode.Implied):     (0x00, 1),
