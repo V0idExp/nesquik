@@ -33,5 +33,6 @@ import pytest
     ('return ((2 == 2) + (0 == (3 > 3))) == 2', 1)
 ])
 def test_expressions(cpu, code, exp_result):
-    cpu.compile_and_run(code)
+    main_wrapper = f'func main():\n\t{code}\n'
+    cpu.compile_and_run(main_wrapper)
     assert cpu.a == exp_result

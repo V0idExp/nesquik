@@ -5,9 +5,13 @@ from lark.indenter import Indenter
 
 
 _grammar = r'''
-    start: _var_list _statement_list
+    start: var_list func_list
 
-    _var_list: (_var_decl|COMMENT|_NL)*
+    func_list: (func|COMMENT|_NL)*
+
+    func: "func" NAME "(" ")" ":" _NL _INDENT _statement_list _DEDENT
+
+    var_list: (_var_decl|COMMENT|_NL)*
 
     var: NAME ["=" expression]
 
@@ -41,6 +45,8 @@ _grammar = r'''
         | expression "==" expression    -> eq
         | expression "!=" expression    -> neq
 
+    call: NAME "(" ")"
+
     ?binop: expression "+" term         -> add
           | expression "-" term         -> sub
 
@@ -55,6 +61,7 @@ _grammar = r'''
            | INT                        -> imm
            | "(" expression ")"
            | unop
+           | call
 
     HEXINT: "$" HEXDIGIT+
 

@@ -26,6 +26,11 @@ class NESQuikInternalError(Exception):
     pass
 
 
+class NESQuikUndefinedFunction(Exception):
+
+    pass
+
+
 class Program:
 
     def __init__(self, ast, org):
@@ -60,6 +65,7 @@ class CodeGenerator(Interpreter, Stage):
         self.prg = None
         self.registers = {}
         self.vars = {}
+        self.functions = {}
         self.reserved = 4
         self.label_counter = count()
         self.required = {}
@@ -253,35 +259,39 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, None, None, end_label)
 
     def start(self, t):
-        lo = hex(self.base_ptr)[2:]
-        hi = hex(self.base_ptr + 1)[2:]
-
-        # base pointer HI part is always 0
+        # initialize base pointer HI part (always 0, wraps around on indexed
+        # addressing)
+        bp_hi = hex(self.base_ptr + 1)[2:]
         self._instr(t, Op.LDA, '#$00')
-        self._instr(t, Op.STA, f'${hi}')
+        self._instr(t, Op.STA, f'${bp_hi}')
 
-        # save current stack pointer
-        self._instr(t, Op.TSX)
-        self._instr(t, Op.TXA)
-        self._instr(t, Op.PHA)
-        self._instr(t, Op.STA, f'${lo}')
-        self._instr(t, None, None, 'start')
+        def get_child(type):
+            try:
+                return [c for c in t.children if c.data == type][0]
+            except IndexError:
+                return None
 
-        self.visit_children(t)
+        # define global variables
+        var_list = get_child('var_list')
+        if var_list is not None:
+            self.visit(var_list)
 
-        # TODO: uncomment these when multiple stack frames are implemented
-        # restore stack pointer
-        # self._instr(t, Op.LDX, f'${lo}')
-        # self._instr(t, Op.TXS)
-        # self._instr(t, Op.PLA)
-        # self._instr(t, Op.STA, f'${lo}')
+        # add a jump to `main` function
+        self._instr(t, Op.JSR, 'main')
+        # BRK instruction at the end
+        self._instr(t, Op.BRK)
 
-        if self.required:
-            # if there are any required subroutines, they'll be added at the end
-            # of the code, separate them for previous code with a BRK
-            # instruction
-            self._instr(t, Op.BRK)
+        # define functions
+        func_list = get_child('func_list')
+        for func in func_list.children:
+            self.visit(func)
+            name = func.children[0].value
+            self.functions[name] = func
 
+        if 'main' not in self.functions:
+            raise NESQuikUndefinedFunction(f'function "main" required but not defined')
+
+        # define required subroutines
         for name, subroutine in self.required.items():
             self._resetlabels(t)
             # add a global label at the subroutine start
@@ -311,10 +321,18 @@ class CodeGenerator(Interpreter, Stage):
 
         # check whether the associated variable is already in the registers
         reg_t = self.registers.get(Reg.A)
-        if reg_t.data == 'var' and not isinstance(reg_t.loc, StackOffset) and reg_t.loc == loc:
+        if reg_t is not None and reg_t.data == 'var' and not isinstance(reg_t.loc, StackOffset) and reg_t.loc == loc:
             self._setloc(t, Reg.A)
         else:
             self._setloc(t, loc)
+
+    def call(self, t):
+        name = t.children[0].value
+        if name not in self.functions:
+            raise NESQuikUndefinedFunction(f'function "{name}" called but not defined')
+
+        self._instr(t, Op.JSR, name)
+        self._setloc(t, Reg.A)
 
     def var(self, t):
         # on declaration, allocate memory for the variable and pin it in vars map
@@ -326,6 +344,39 @@ class CodeGenerator(Interpreter, Stage):
         if len(t.children) > 1:
             # perform the assignment, if there's any initialization expression
             self.assign(t)
+
+    def func(self, t):
+        # function entry label
+        name = t.children[0].value
+        self._instr(t, None, None, name)
+
+        bp_lo = hex(self.base_ptr)[2:]
+
+        # save current stack pointer as base pointer
+        self._instr(t, Op.TSX)
+        self._instr(t, Op.LDA, f'${bp_lo}')
+        self._instr(t, Op.PHA)
+        self._instr(t, Op.STX, f'${bp_lo}')
+
+        # cleanup registers
+        self.registers = {}
+
+        self.visit_children(t)
+
+        # save A to Y
+        self._instr(t, Op.TAY)
+
+        # restore stack pointer
+        self._instr(t, Op.LDX, f'${bp_lo}')
+        self._instr(t, Op.DEX)
+        self._instr(t, Op.TXS)
+        self._instr(t, Op.PLA)
+        self._instr(t, Op.STA, f'${bp_lo}')
+
+        # restore A
+        self._instr(t, Op.TYA)
+
+        self._instr(t, Op.RTS)
 
     def _cmp(self, t, left, right):
         self.visit(right)
