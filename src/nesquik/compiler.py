@@ -1,12 +1,13 @@
 import re
+from dataclasses import dataclass
 from enum import Enum
 from itertools import count
 
+from lark.tree import Tree
 from lark.visitors import Interpreter
 
 from nesquik.lib import DIV, MUL
 from nesquik.opcodes import OPCODES, AddrMode, Op
-
 
 GLOBAL_LABEL = re.compile(r'^\w{3,}$')
 
@@ -22,6 +23,11 @@ class NESQuikRedefinedVariable(Exception):
 
 
 class NESQuikUndefinedLabel(Exception):
+
+    pass
+
+
+class NESQuikInvalidDereference(Exception):
 
     pass
 
@@ -57,6 +63,19 @@ class StackOffset(int):
     pass
 
 
+class Pointer(int):
+    pass
+
+
+@dataclass
+class Variable:
+    tree: Tree
+    name: str
+    loc: int
+    size: int
+    is_pointer: bool
+
+
 class Stage:
 
     def exec(self, prg: Program):
@@ -71,12 +90,13 @@ class CodeGenerator(Interpreter, Stage):
         self.registers = {}
         self.global_vars = {}
         self.functions = {}
-        self.reserved = 4
+        self.reserved = 6
         self.label_counter = count()
         self.required = {}
         self.scope_offsets = [0]
         self.scope_vars = []
         self.base_ptr = 0x02
+        self.tmp_ptr = 0x04
 
     def exec(self, prg):
         self.prg = prg
@@ -325,7 +345,7 @@ class CodeGenerator(Interpreter, Stage):
             loc = t.loc
         else:
             # assigning to an existing var
-            loc = self._getvar(name)
+            loc = self._getvar(name).loc
 
         self.visit(expr)
         self._pull(t, expr)
@@ -336,7 +356,7 @@ class CodeGenerator(Interpreter, Stage):
 
     def ref(self, t):
         name = t.children[0].value
-        loc = self._getvar(name)
+        loc = self._getvar(name).loc
 
         # check whether the associated variable is already in the registers to
         # avoid unnecessary pull
@@ -348,6 +368,25 @@ class CodeGenerator(Interpreter, Stage):
         else:
             self._setloc(t, loc)
 
+    def deref(self, t):
+        name = t.children[0].value
+        var = self._getvar(name)
+        if not var.is_pointer:
+            raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
+
+        # if the pointer is located on stack, copy it to reserved zero-page
+        # location in order to perform indirect addressing
+        if isinstance(var.loc, StackOffset):
+            tmp_ptr_lo = hex(self.tmp_ptr)[2:]
+            tmp_ptr_hi = hex(self.tmp_ptr + 1)[2:]
+            self._setloc(t, var.loc)
+            self._pull(t, t)
+            self._instr(t, Op.STA, f'${tmp_ptr_lo}')
+            self._setloc(t, StackOffset(var.loc - 1))
+            self._pull(t, t)
+            self._instr(t, Op.STA, f'${tmp_ptr_hi}')
+            self._setloc(t, Pointer(self.tmp_ptr))
+
     def call(self, t):
         name = t.children[0].value
         if name not in self.functions:
@@ -358,6 +397,9 @@ class CodeGenerator(Interpreter, Stage):
 
     def var(self, t):
         name = t.children[0].value
+        is_pointer = name.startswith('*')
+        if is_pointer:
+            name = name[1:]
 
         scope = self.global_vars if not self.scope_vars else self.scope_vars[-1]
         if name in scope:
@@ -378,11 +420,18 @@ class CodeGenerator(Interpreter, Stage):
             # perform the assignment, if there's any initialization expression
             self.assign(t)
 
+        var = Variable(
+            tree=t,
+            name=name,
+            loc=loc,
+            size=2 if is_pointer else 1,
+            is_pointer=is_pointer)
+
         # map the name to variable's location in memory
         if is_local:
-            self.scope_vars[-1][name] = loc
+            self.scope_vars[-1][name] = var
         else:
-            self.global_vars[name] = loc
+            self.global_vars[name] = var
 
     def func(self, t):
         # function entry label
@@ -404,10 +453,15 @@ class CodeGenerator(Interpreter, Stage):
         if var_list:
             stack_offset = self.scope_offsets[-1]
             for var in var_list:
+                name = var.children[0].value
+                is_pointer = name.startswith('*')
+                size = 2 if is_pointer else 1
                 loc = StackOffset(0xff + stack_offset)
-                stack_offset -= 1
+                stack_offset -= size
                 self._setloc(var, loc)
-                self._instr(t, Op.DEX)
+
+                for _ in range(size):
+                    self._instr(t, Op.DEX)
 
             self._instr(t, Op.TXS)
             self.scope_offsets[-1] = stack_offset
@@ -483,7 +537,7 @@ class CodeGenerator(Interpreter, Stage):
         raise NESQuikUndefinedVariable(f'use of undefined variable {name}')
 
     def _alloc(self):
-        return self.reserved + len(self.global_vars)
+        return self.reserved + sum(var.size for var in self.global_vars.values())
 
     def _store(self, t, loc):
         v = self.registers[Reg.A]
@@ -503,7 +557,7 @@ class CodeGenerator(Interpreter, Stage):
                 # do not push on stack refs to variables, since they're already
                 # in memory
                 name = v.children[0].value
-                self._setloc(v, self._getvar(name))
+                self._setloc(v, self._getvar(name)).loc
             else:
                 # use the current scope's stack offset
                 stack_offset = self.scope_offsets[-1]
@@ -530,6 +584,10 @@ class CodeGenerator(Interpreter, Stage):
         elif isinstance(arg.loc, StackOffset):
             # pick the value from the stack using indirect addressing
             self._ldy_offset(t, arg)
+            self._instr(t, Op.LDA, arg)
+        elif isinstance(arg.loc, Pointer):
+            # use zero-page indirect indexing
+            self._instr(t, Op.LDX, f'#{arg.loc}')
             self._instr(t, Op.LDA, arg)
         else:
             # either immediate or memory
@@ -616,6 +674,9 @@ class CodeGenerator(Interpreter, Stage):
                 if isinstance(arg.loc, StackOffset):
                     mode = AddrMode.IndirectY
                     arg = self.base_ptr
+                elif isinstance(arg.loc, Pointer):
+                    mode = AddrMode.IndirectX
+                    arg = 0
                 else:
                     # memory location
                     # TODO: support for absolute addresses?
@@ -641,6 +702,8 @@ class CodeGenerator(Interpreter, Stage):
             line = f'{op.value} {arg}'
         elif mode is AddrMode.IndirectY:
             line = f'{op.value} (${hex(arg)[2:]}),Y'
+        elif mode is AddrMode.IndirectX:
+            line = f'{op.value} (${hex(arg)[2:]},X)'
         else:
             raise NESQuikInternalError(f'unsupported addr mode {mode}')
 

@@ -13,7 +13,7 @@ _grammar = r'''
 
     var_list: (_var_decl|COMMENT|_NL)*
 
-    var: NAME ["=" expression]
+    var: (PTRNAME|NAME) ["=" expression]
 
     _var_decl: "var" var ("," var)*
 
@@ -67,6 +67,9 @@ _grammar = r'''
            | "(" expression ")"
            | unop
            | call
+           | "*" NAME                   -> deref
+
+    PTRNAME: "*" NAME
 
     HEXINT: "$" HEXDIGIT+
 

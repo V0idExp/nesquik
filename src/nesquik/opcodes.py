@@ -48,6 +48,7 @@ class AddrMode(Enum):
     Absolute = 'abs'
     Relative = 'rel'
     IndirectY = 'iny'
+    IndirectX = 'inx'
 
 
 OPCODES = {
@@ -76,6 +77,7 @@ OPCODES = {
     (Op.JMP, AddrMode.Absolute):    (0x4C, 3),
     (Op.JSR, AddrMode.Absolute):    (0x20, 3),
     (Op.LDA, AddrMode.Immediate):   (0xA9, 2),
+    (Op.LDA, AddrMode.IndirectX):   (0xA1, 2),
     (Op.LDA, AddrMode.IndirectY):   (0xB1, 2),
     (Op.LDA, AddrMode.Zeropage):    (0xA5, 2),
     (Op.LDX, AddrMode.Immediate):   (0xA2, 2),
@@ -94,6 +96,7 @@ OPCODES = {
     (Op.SBC, AddrMode.Zeropage):    (0xE5, 2),
     (Op.SEC, AddrMode.Implied):     (0x38, 1),
     (Op.STA, AddrMode.Zeropage):    (0x85, 2),
+    (Op.STA, AddrMode.IndirectX):   (0x81, 2),
     (Op.STA, AddrMode.IndirectY):   (0x91, 2),
     (Op.STX, AddrMode.Zeropage):    (0x86, 2),
     (Op.STY, AddrMode.Zeropage):    (0x84, 2),

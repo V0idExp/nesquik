@@ -88,5 +88,5 @@ func main():
 def test_funcs_with_globals_shadowing(cpu):
     cpu.compile_and_run(FUNCS_WITH_GLOBALS_SHADOWING)
     assert cpu.a == 150
-    assert cpu.memory[0x04] == 15  # check global `a`
-    assert cpu.memory[0x05] == 10  # check global `b`
+    assert cpu.memory[0x06] == 15  # check global `a`
+    assert cpu.memory[0x07] == 10  # check global `b`
