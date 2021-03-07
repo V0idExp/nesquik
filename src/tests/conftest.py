@@ -9,7 +9,7 @@ class CPU(MPU):
     def __init__(self):
         super().__init__()
 
-    def compile_and_run(self, code):
+    def compile(self, code):
         self.reset()
 
         org = 0xc000
@@ -20,6 +20,11 @@ class CPU(MPU):
 
         self.memory[org:org + len(obj)] = obj
         self.pc = org
+
+        return prg
+
+    def compile_and_run(self, code):
+        prg = self.compile(code)
 
         while not self.p & self.INTERRUPT:
             self.step()

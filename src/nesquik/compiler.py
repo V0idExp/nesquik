@@ -259,6 +259,20 @@ class CodeGenerator(Interpreter, Stage):
         # end label
         self._instr(t, None, None, end_label)
 
+    def while_stmt(self, t):
+        expr, body = t.children[0], t.children[1]
+
+        self._instr(t, None, None, '@1')    # start of the loop
+        self.visit(expr)
+        self._pull(t, expr)
+        self._instr(t, Op.CMP, '#0')        # compare the expression result
+        self._instr(t, Op.BNE, '@2')        # jump to body if non-zero
+        self._instr(t, Op.JMP, '@0')        # jump to the end of the loop if zero
+        self._instr(t, None, None, '@2')    # start of the body
+        self.visit(body)
+        self._instr(t, Op.JMP, '@1')        # jump to the start of the loop
+        self._instr(t, None, None, '@0')    # end of the loop
+
     def start(self, t):
         # initialize base pointer HI part (always 0, wraps around on indexed
         # addressing)

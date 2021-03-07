@@ -20,16 +20,20 @@ _grammar = r'''
     _statement_list: (_statement|COMMENT|_NL)*
 
     _statement: if_stmt
+              | while_stmt
               | assign
               | call
               | ret
+              | "pass"
 
-    branch: _NL _INDENT _statement_list _DEDENT
+    body: _NL _INDENT _statement_list _DEDENT
+
+    while_stmt: "while" expression ":" body
 
     if_stmt: if_branch elif_branch* else_branch?
-    if_branch: "if" expression ":" branch
-    elif_branch: "elif" expression ":" branch
-    else_branch: "else" ":" branch
+    if_branch: "if" expression ":" body
+    elif_branch: "elif" expression ":" body
+    else_branch: "else" ":" body
 
     assign: NAME "=" expression
 
