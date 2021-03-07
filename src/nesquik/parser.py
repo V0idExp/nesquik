@@ -22,6 +22,7 @@ _grammar = r'''
     _statement: if_stmt
               | while_stmt
               | assign
+              | mem_assign
               | call
               | ret
               | "pass"
@@ -36,6 +37,8 @@ _grammar = r'''
     else_branch: "else" ":" body
 
     assign: NAME "=" expression
+
+    mem_assign: PTRNAME "=" expression
 
     ret: "return" expression
 

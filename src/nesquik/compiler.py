@@ -347,9 +347,36 @@ class CodeGenerator(Interpreter, Stage):
             # assigning to an existing var
             loc = self._getvar(name).loc
 
+        # evaluate the expression
         self.visit(expr)
         self._pull(t, expr)
-        self._store(t, loc)
+
+        # save it to memory or stack variable
+        self._setloc(expr, loc)
+        if isinstance(loc, StackOffset):
+            self._ldy_offset(t, expr)
+        self._instr(t, Op.STA, expr)
+
+    def mem_assign(self, t):
+        name, expr = t.children
+        name = name.value[1:]
+
+        var = self._getvar(name)
+        if not var.is_pointer:
+            raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
+
+        # prepare the pointer first
+        self._load_ptr(t, var.loc)
+
+        # evaluate the expression
+        self.visit(expr)
+        self._pull(t, expr)
+
+        # store the expression in memory pointed to by the pointer using
+        # indirect indexed addressing via X register
+        self._setloc(expr, Pointer(var.loc))
+        self._instr(t, Op.LDX, f'#{t.loc}')
+        self._instr(t, Op.STA, expr)
 
     def imm(self, t):
         self._setloc(t, None)
@@ -374,18 +401,7 @@ class CodeGenerator(Interpreter, Stage):
         if not var.is_pointer:
             raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
 
-        # if the pointer is located on stack, copy it to reserved zero-page
-        # location in order to perform indirect addressing
-        if isinstance(var.loc, StackOffset):
-            tmp_ptr_lo = hex(self.tmp_ptr)[2:]
-            tmp_ptr_hi = hex(self.tmp_ptr + 1)[2:]
-            self._setloc(t, var.loc)
-            self._pull(t, t)
-            self._instr(t, Op.STA, f'${tmp_ptr_lo}')
-            self._setloc(t, StackOffset(var.loc - 1))
-            self._pull(t, t)
-            self._instr(t, Op.STA, f'${tmp_ptr_hi}')
-            self._setloc(t, Pointer(self.tmp_ptr))
+        self._load_ptr(t, var.loc)
 
     def call(self, t):
         name = t.children[0].value
@@ -539,13 +555,6 @@ class CodeGenerator(Interpreter, Stage):
     def _alloc(self):
         return self.reserved + sum(var.size for var in self.global_vars.values())
 
-    def _store(self, t, loc):
-        v = self.registers[Reg.A]
-        self._setloc(v, loc)
-        if isinstance(v.loc, StackOffset):
-            self._ldy_offset(t, v)
-        self._instr(t, Op.STA, v)
-
     def _ldy_offset(self, t, v):
         if isinstance(v.loc, StackOffset):
             self._instr(t, Op.LDY, f'#${hex(v.loc)[2:]}')
@@ -594,6 +603,24 @@ class CodeGenerator(Interpreter, Stage):
             self._instr(t, Op.LDA, arg)
 
         self._setloc(arg, Reg.A)
+
+    def _load_ptr(self, t, loc):
+        # if the pointer is located on stack, copy the address to reserved
+        # zero-page location in order to perform indirect addressing
+        if isinstance(loc, StackOffset):
+            tmp_ptr_lo = hex(self.tmp_ptr)[2:]
+            tmp_ptr_hi = hex(self.tmp_ptr + 1)[2:]
+            self._setloc(t, loc)
+            self._pull(t, t)
+            self._instr(t, Op.STA, f'${tmp_ptr_lo}')
+            self._setloc(t, StackOffset(loc - 1))
+            self._pull(t, t)
+            self._instr(t, Op.STA, f'${tmp_ptr_hi}')
+            self._setloc(t, Pointer(self.tmp_ptr))
+        else:
+            # the pointer is in a global variable and is already in zero-page
+            # memory
+            self._setloc(t, Pointer(loc))
 
     def _push_scope(self, t):
         self.registers.clear()

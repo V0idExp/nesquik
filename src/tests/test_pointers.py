@@ -34,3 +34,16 @@ func main():
 def test_deref_global_ptr_arithmetics(cpu, addr, offset, exp_result):
     cpu.compile_and_run(DEREF_PTR_ARITHMETICS.format(addr=addr, offset=offset))
     assert cpu.a == exp_result
+
+
+ASSIGN_TO_MEMORY = '''
+var a = 200
+
+func main():
+    var *ptr = $6
+    *ptr = 123
+    return a
+'''
+def test_assign_to_memory(cpu):
+    cpu.compile_and_run(ASSIGN_TO_MEMORY)
+    assert cpu.a == 123
