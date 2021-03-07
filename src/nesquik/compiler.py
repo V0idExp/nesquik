@@ -4,7 +4,7 @@ from itertools import count
 
 from lark.visitors import Interpreter
 
-from nesquik.lib import MUL, DIV
+from nesquik.lib import DIV, MUL
 from nesquik.opcodes import OPCODES, AddrMode, Op
 
 
@@ -64,12 +64,13 @@ class CodeGenerator(Interpreter, Stage):
         super().__init__()
         self.prg = None
         self.registers = {}
-        self.vars = {}
+        self.global_vars = {}
         self.functions = {}
         self.reserved = 4
         self.label_counter = count()
         self.required = {}
         self.scope_offsets = [0]
+        self.scope_vars = []
         self.base_ptr = 0x02
 
     def exec(self, prg):
@@ -265,16 +266,9 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.LDA, '#$00')
         self._instr(t, Op.STA, f'${bp_hi}')
 
-        def get_child(type):
-            try:
-                return [c for c in t.children if c.data == type][0]
-            except IndexError:
-                return None
-
         # define global variables
-        var_list = get_child('var_list')
-        if var_list is not None:
-            self.visit(var_list)
+        var_list = self._get_child(t, 'var_list')
+        self.visit(var_list)
 
         # add a jump to `main` function
         self._instr(t, Op.JSR, 'main')
@@ -282,7 +276,7 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.BRK)
 
         # define functions
-        func_list = get_child('func_list')
+        func_list = self._get_child(t, 'func_list')
         for func in func_list.children:
             self.visit(func)
             name = func.children[0].value
@@ -305,12 +299,18 @@ class CodeGenerator(Interpreter, Stage):
         name, expr = t.children
         name = name.value
 
+        if hasattr(t, 'loc') and isinstance(t.loc, int):
+            # attempt to use the node's `loc` first, since this assignment could
+            # be part of var's initialization and the name is not yet in the
+            # scope
+            loc = t.loc
+        else:
+            # assigning to an existing var
+            loc = self._getvar(name)
+
         self.visit(expr)
         self._pull(t, expr)
-
-        loc = self._getvar(name)
         self._store(t, loc)
-        self.registers[Reg.A] = t
 
     def imm(self, t):
         self._setloc(t, None)
@@ -319,9 +319,12 @@ class CodeGenerator(Interpreter, Stage):
         name = t.children[0].value
         loc = self._getvar(name)
 
-        # check whether the associated variable is already in the registers
+        # check whether the associated variable is already in the registers to
+        # avoid unnecessary pull
         reg_t = self.registers.get(Reg.A)
-        if reg_t is not None and reg_t.data == 'var' and not isinstance(reg_t.loc, StackOffset) and reg_t.loc == loc:
+        if reg_t is not None\
+           and reg_t.data in ('assign', 'var', 'ref')\
+           and reg_t.children[0].value == name:
             self._setloc(t, Reg.A)
         else:
             self._setloc(t, loc)
@@ -335,33 +338,63 @@ class CodeGenerator(Interpreter, Stage):
         self._setloc(t, Reg.A)
 
     def var(self, t):
-        # on declaration, allocate memory for the variable and pin it in vars map
         name = t.children[0].value
-        loc = self._alloc()
-        self.vars[name] = loc
-        self._setloc(t, loc)
+
+        if not self.scope_vars:
+            # no pushed scopes, allocate a global variable
+            loc = self._alloc()
+            self._setloc(t, loc)
+            is_local = False
+        else:
+            # local variable, the location is a stack offset, assigned
+            # previously by func()
+            loc = t.loc
+            is_local = True
 
         if len(t.children) > 1:
             # perform the assignment, if there's any initialization expression
             self.assign(t)
+
+        # map the name to variable's location in memory
+        if is_local:
+            self.scope_vars[-1][name] = loc
+        else:
+            self.global_vars[name] = loc
 
     def func(self, t):
         # function entry label
         name = t.children[0].value
         self._instr(t, None, None, name)
 
-        bp_lo = hex(self.base_ptr)[2:]
-
         # save current stack pointer as base pointer
+        bp_lo = hex(self.base_ptr)[2:]
         self._instr(t, Op.TSX)
         self._instr(t, Op.LDA, f'${bp_lo}')
         self._instr(t, Op.PHA)
         self._instr(t, Op.STX, f'${bp_lo}')
 
-        # cleanup registers
-        self.registers = {}
+        # create a new scope
+        self._push_scope(t)
 
+        # reserve stack space for local variables by decrementing SP register
+        var_list = self._get_child(t, 'var_list').children
+        if var_list:
+            stack_offset = self.scope_offsets[-1]
+            for var in var_list:
+                loc = StackOffset(0xff + stack_offset)
+                stack_offset -= 1
+                self._setloc(var, loc)
+                self._instr(t, Op.DEX)
+
+            self._instr(t, Op.TXS)
+            self.scope_offsets[-1] = stack_offset
+
+        # initialize the locals and add the body
         self.visit_children(t)
+
+        # pop the scope, but don't bother restoring the stack, it will be reset
+        # below before return
+        self._pop_scope(t, restore_stack=False)
 
         # save A to Y
         self._instr(t, Op.TAY)
@@ -377,6 +410,12 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.TYA)
 
         self._instr(t, Op.RTS)
+
+    def _get_child(self, t, type):
+        try:
+            return [c for c in t.children if getattr(c, 'data', None) == type][0]
+        except IndexError:
+            return None
 
     def _cmp(self, t, left, right):
         self.visit(right)
@@ -412,17 +451,22 @@ class CodeGenerator(Interpreter, Stage):
         self._setloc(t, Reg.A)
 
     def _getvar(self, name):
-        try:
-            return self.vars[name]
-        except KeyError:
-            raise NESQuikUndefinedVariable(f'use of undefined variable {name}')
+        scopes = [self.global_vars] + self.scope_vars
+        while scopes:
+            scope = scopes.pop(-1)
+            if name in scope:
+                return scope[name]
+
+        raise NESQuikUndefinedVariable(f'use of undefined variable {name}')
 
     def _alloc(self):
-        return self.reserved + len(self.vars) + 1
+        return self.reserved + len(self.global_vars)
 
     def _store(self, t, loc):
         v = self.registers[Reg.A]
         self._setloc(v, loc)
+        if isinstance(v.loc, StackOffset):
+            self._ldy_offset(t, v)
         self._instr(t, Op.STA, v)
 
     def _ldy_offset(self, t, v):
@@ -471,20 +515,24 @@ class CodeGenerator(Interpreter, Stage):
         self._setloc(arg, Reg.A)
 
     def _push_scope(self, t):
+        self.registers.clear()
         self.scope_offsets.append(self.scope_offsets[-1])
+        self.scope_vars.append({})
 
-    def _pop_scope(self, t):
+    def _pop_scope(self, t, restore_stack=True):
         # if the stack offset changed in relation to previous scope during
         # condition expression evaluation, pop the inserted elements from the
         # stack
         pop_count = abs(self.scope_offsets[-1] - self.scope_offsets[-2])
-        if pop_count > 0:
+        if restore_stack and pop_count > 0:
             self._instr(t, Op.TSX)
             for _ in range(pop_count):
                 self._instr(t, Op.INX)
             self._instr(t, Op.TXS)
 
+        self.scope_vars.pop(-1)
         self.scope_offsets.pop(-1)
+        self.registers.clear()
 
     def _setloc(self, t, loc):
         if isinstance(loc, Reg):

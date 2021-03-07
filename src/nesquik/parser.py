@@ -9,7 +9,7 @@ _grammar = r'''
 
     func_list: (func|COMMENT|_NL)*
 
-    func: "func" NAME "(" ")" ":" _NL _INDENT _statement_list _DEDENT
+    func: "func" NAME "(" ")" ":" _NL _INDENT var_list _statement_list _DEDENT
 
     var_list: (_var_decl|COMMENT|_NL)*
 
@@ -21,14 +21,15 @@ _grammar = r'''
 
     _statement: if_stmt
               | assign
+              | call
               | ret
 
-    _block: _NL _INDENT _statement_list _DEDENT
+    branch: _NL _INDENT _statement_list _DEDENT
 
     if_stmt: if_branch elif_branch* else_branch?
-    if_branch: "if" expression ":" _block
-    elif_branch: "elif" expression ":" _block
-    else_branch: "else" ":" _block
+    if_branch: "if" expression ":" branch
+    elif_branch: "elif" expression ":" branch
+    else_branch: "else" ":" branch
 
     assign: NAME "=" expression
 

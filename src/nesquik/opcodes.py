@@ -94,6 +94,7 @@ OPCODES = {
     (Op.SBC, AddrMode.Zeropage):    (0xE5, 2),
     (Op.SEC, AddrMode.Implied):     (0x38, 1),
     (Op.STA, AddrMode.Zeropage):    (0x85, 2),
+    (Op.STA, AddrMode.IndirectY):   (0x91, 2),
     (Op.STX, AddrMode.Zeropage):    (0x86, 2),
     (Op.STY, AddrMode.Zeropage):    (0x84, 2),
     (Op.TAX, AddrMode.Implied):     (0xAA, 1),
