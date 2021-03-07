@@ -16,6 +16,11 @@ class NESQuikUndefinedVariable(Exception):
     pass
 
 
+class NESQuikRedefinedVariable(Exception):
+
+    pass
+
+
 class NESQuikUndefinedLabel(Exception):
 
     pass
@@ -353,6 +358,10 @@ class CodeGenerator(Interpreter, Stage):
 
     def var(self, t):
         name = t.children[0].value
+
+        scope = self.global_vars if not self.scope_vars else self.scope_vars[-1]
+        if name in scope:
+            raise NESQuikRedefinedVariable(f'variable "{name}" is already defined')
 
         if not self.scope_vars:
             # no pushed scopes, allocate a global variable
