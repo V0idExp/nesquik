@@ -32,7 +32,7 @@ class NESQuikInvalidDereference(Exception):
     pass
 
 
-class NESQuikTypeMismatch(Exception):
+class NESQuikSizeError(ValueError):
 
     pass
 
@@ -87,6 +87,12 @@ class Stage:
         raise NotImplementedError
 
 
+def parse_int(s):
+    if s.startswith('$'):
+        return int(s[1:], base=16)
+    return int(s, base=10)
+
+
 class CodeGenerator(Interpreter, Stage):
 
     def __init__(self):
@@ -116,42 +122,56 @@ class CodeGenerator(Interpreter, Stage):
 
         # evaluate right expression
         self.visit(right)
+        if right.size != 1:
+            raise NESQuikSizeError(f'unsupported sub operand size')
         if isinstance(right.loc, Pointer):
             self._pull(t, right)
         if right.loc is Reg.A:
             self._push(t)
 
         self.visit(left)
+        if left.size != 1:
+            raise NESQuikSizeError(f'unsupported sub operand size')
         self._pull(t, left)
 
         self._instr(t, Op.SEC)
         if isinstance(right.loc, StackOffset):
             self._ldy_offset(t, right)
         self._instr(t, Op.SBC, right)
+
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def add(self, t):
         left, right = t.children
 
         self.visit(left)
+        if left.size != 1:
+            raise NESQuikSizeError(f'unsupported add operand size')
         if isinstance(left.loc, Pointer):
             self._pull(t, left)
         if left.loc is Reg.A:
             self._push(t)
 
         self.visit(right)
+        if right.size != 1:
+            raise NESQuikSizeError(f'unsupported add operand size')
         self._pull(t, right)
 
         self._instr(t, Op.CLC)
         if isinstance(left.loc, StackOffset):
             self._ldy_offset(t, left)
         self._instr(t, Op.ADC, left)
+
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def neg(self, t):
-        arg = t.children[0]
-        self.visit(arg)
-        self._pull(t, arg)
+        expr = t.children[0]
+        self.visit(expr)
+        if expr.size != 1:
+            raise NESQuikSizeError(f'unsupported neg operand size')
+        self._pull(t, expr)
 
         # perform two's complement negation: invert all bits and add 1
         self._instr(t, Op.CLC)
@@ -159,17 +179,22 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.ADC, '#$01')
 
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def mul(self, t):
         left, right = t.children
 
         self.visit(left)
+        if left.size != 1:
+            raise NESQuikSizeError(f'unsupported mul operand size')
         if isinstance(left.loc, Pointer):
             self._pull(t, left)
         if left.loc is Reg.A:
             self._push(t)
 
         self.visit(right)
+        if right.size != 1:
+            raise NESQuikSizeError(f'unsupported mul operand size')
         self._pull(t, right)
         self._instr(t, Op.STA, '$0')
 
@@ -178,17 +203,22 @@ class CodeGenerator(Interpreter, Stage):
 
         self._instr(t, Op.JSR, self._require(MUL))
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def div(self, t):
         left, right = t.children
 
         self.visit(right)
+        if right.size != 1:
+            raise NESQuikSizeError(f'unsupported div operand size')
         if isinstance(right.loc, Pointer):
             self._pull(t, right)
         if right.loc is Reg.A:
             self._push(t)
 
         self.visit(left)
+        if left.size != 1:
+            raise NESQuikSizeError(f'unsupported div operand size')
         self._pull(t, left)
         self._instr(t, Op.STA, '$0')
 
@@ -197,6 +227,7 @@ class CodeGenerator(Interpreter, Stage):
 
         self._instr(t, Op.JSR, self._require(DIV))
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def eq(self, t):
         # TODO: try to swap the operands if one of them is supposed to be
@@ -209,6 +240,7 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.LDA, '#1', '@0')
         self._instr(t, None, None, '@1')
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def neq(self, t):
         # TODO: try to swap the operands if one of them is supposed to be
@@ -222,22 +254,27 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.LDA, '#1', '@0')
         self._instr(t, None, None, '@1')
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def geq(self, t):
         left, right = t.children
         self._geq(t, left, right)
+        self._setsize(t, 1)
 
     def leq(self, t):
         left, right = t.children
         self._geq(t, right, left)
+        self._setsize(t, 1)
 
     def gt(self, t):
         left, right = t.children
         self._gt(t, left, right)
+        self._setsize(t, 1)
 
     def lt(self, t):
         left, right = t.children
         self._gt(t, right, left)
+        self._setsize(t, 1)
 
     def if_stmt(self, t):
         # local labels counter
@@ -355,32 +392,34 @@ class CodeGenerator(Interpreter, Stage):
             for instr in subroutine.code:
                 self._instr(t, *instr)
 
-    def assign(self, t):
+    def assign(self, t, size=None):
         name, expr = t.children
         name = name.value
 
+        # attempt to use the node's `loc` first, since this assignment could
+        # be part of var's initialization and the name is not yet in the
+        # scope
         if hasattr(t, 'loc') and isinstance(t.loc, int):
-            # attempt to use the node's `loc` first, since this assignment could
-            # be part of var's initialization and the name is not yet in the
-            # scope
             loc = t.loc
-            is_ptr = name.startswith('*')
+            if size is None:
+                raise NESQuikInternalError(f'unknown size of variable "{name}"')
         else:
             # assigning to an existing var
             var = self._getvar(name)
+            size = var.size
             loc = var.loc
-            is_ptr = var.is_pointer
 
-        # if assigning a result of address taking, ensure the target variable is
-        # a pointer and thus, can hold a word-sized value
-        if expr.data == 'getref':
-            if not is_ptr:
-                raise NESQuikTypeMismatch(f'trying to assign a reference to a non-pointer varaible "{name}"')
+        # evaluate the expression
+        self.visit(expr)
+        self._pull(t, expr)
 
-            # evaluate the reference take expression; A = LO, X = HI
-            self.visit(expr)
+        # word-sized assignment; LSB = A, MSB = X
+        if expr.size == 2:
 
-            # assigning to a pointer on stack
+            if size != 2:
+                raise NESQuikSizeError(f'trying to assign a value larger then the size of variable "{name}"')
+
+            # assigning to a stack variable
             if isinstance(loc, StackOffset):
                 loc_lo = loc
                 loc_hi = StackOffset(loc + 1)
@@ -392,20 +431,17 @@ class CodeGenerator(Interpreter, Stage):
                 self._ldy_offset(t, expr)
                 self._instr(t, Op.STA, expr)
 
-            # assigning to a global pointer
+            # assigning to a global variable
             else:
                 self._setloc(expr, loc)
                 self._instr(t, Op.STA, expr)
                 self._instr(t, Op.TXA)
                 self._setloc(expr, loc + 1)
                 self._instr(t, Op.STA, expr)
+                self._setloc(expr, loc)
 
-        # normal byte-sized assignment
+        # byte-sized assignment
         else:
-            # evaluate the expression
-            self.visit(expr)
-            self._pull(t, expr)
-
             # save it to memory or stack variable
             self._setloc(expr, loc)
             if isinstance(loc, StackOffset):
@@ -424,13 +460,13 @@ class CodeGenerator(Interpreter, Stage):
         self.visit(expr)
         if isinstance(expr.loc, Pointer):
             self._pull(t, expr)
-
         if expr.loc is Reg.A:
             self._push(t)
 
         # prepare the pointer: in case of a pointer located on stack, its low
         # and high parts will be copied to a temporary zero-page location for
-        # indirect X addressing, this operation overwrites A register
+        # indirect X addressing;
+        # this operation overwrites A register
         self._load_ptr(t, var.loc)
         # load the X offset from zeropage to the pointer
         self._ldx_offset(t, t)
@@ -442,11 +478,22 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.STA, t)
 
     def imm(self, t):
+        literal = t.children[0]
+        val = parse_int(literal)
+        if val <= 0xff:
+            size = 1
+        elif val <= 0xffff:
+            size = 2
+        else:
+            raise NESQuikSizeError(f'value "{literal}" is too large')
+
+        self._setsize(t, size)
         self._setloc(t, None)
 
     def ref(self, t):
         name = t.children[0].value
-        loc = self._getvar(name).loc
+        var = self._getvar(name)
+        loc = var.loc
 
         # check whether the associated variable is already in the registers to
         # avoid unnecessary pull
@@ -458,6 +505,8 @@ class CodeGenerator(Interpreter, Stage):
         else:
             self._setloc(t, loc)
 
+        self._setsize(t, 2 if var.is_pointer else 1)
+
     def deref(self, t):
         name = t.children[0].value
         var = self._getvar(name)
@@ -465,6 +514,7 @@ class CodeGenerator(Interpreter, Stage):
             raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
 
         self._load_ptr(t, var.loc)
+        self._setsize(t, 1)
 
     def getref(self, t):
         name = t.children[0].value
@@ -495,6 +545,7 @@ class CodeGenerator(Interpreter, Stage):
             self._instr(t, Op.LDX, f'#{hi}')
 
         self._setloc(t, Reg.A)
+        self._setsize(t, 2)
 
     def call(self, t):
         name = t.children[0].value
@@ -503,6 +554,7 @@ class CodeGenerator(Interpreter, Stage):
 
         self._instr(t, Op.JSR, name)
         self._setloc(t, Reg.A)
+        self._setsize(t, 1)
 
     def var(self, t):
         name = t.children[0].value
@@ -527,7 +579,7 @@ class CodeGenerator(Interpreter, Stage):
 
         if len(t.children) > 1:
             # perform the assignment, if there's any initialization expression
-            self.assign(t)
+            self.assign(t, size=2 if is_pointer else 1)
 
         var = Variable(
             tree=t,
@@ -610,12 +662,16 @@ class CodeGenerator(Interpreter, Stage):
 
     def _cmp(self, t, left, right):
         self.visit(right)
+        if right.size != 1:
+            raise NESQuikSizeError(f'unsupported cmp operand size')
         if isinstance(right.loc, Pointer):
             self._pull(t, right)
         if right.loc is Reg.A:
             self._push(t)
 
         self.visit(left)
+        if left.size != 1:
+            raise NESQuikSizeError(f'unsupported cmp operand size')
         self._pull(t, left)
 
         if isinstance(right.loc, StackOffset):
@@ -693,37 +749,108 @@ class CodeGenerator(Interpreter, Stage):
         if arg.loc is Reg.A:
             # do nothing, argument already in place
             return
+
+        # pick the value from stack by dereferencing base pointer + offset using
+        # indirect indexed addressing ($ZP),Y
         elif isinstance(arg.loc, StackOffset):
-            # pick the value from the stack using indirect addressing
-            self._ldy_offset(t, arg)
-            self._instr(t, Op.LDA, arg)
+            if arg.size == 2:
+                loc_lo = arg.loc
+                loc_hi = StackOffset(loc_lo + 1)
+
+                # pull the MSB first from higher byte and store it to X
+                self._setloc(arg, loc_hi)
+                self._ldy_offset(t, arg)
+                self._instr(t, Op.LDA, arg)
+                self._instr(t, Op.TAX)
+
+                # pull LSB afterwards from lower byte and store it to A
+                self._setloc(arg, loc_lo)
+                self._ldy_offset(t, arg)
+                self._instr(t, Op.LDA, arg)
+            else:
+                self._ldy_offset(t, arg)
+                self._instr(t, Op.LDA, arg)
+
+        # pick the value from memory by dereferencing a zp-located pointer using
+        # indexed indirect addressing ($ZP,X)
         elif isinstance(arg.loc, Pointer):
-            # use zero-page indirect indexing to dereference a pointer
-            self._ldx_offset(t, arg)
+            if arg.size == 2:
+                # load the zero-page offset of the pointer into X
+                self._ldx_offset(t, arg)
+
+                # load LSB into A and push it to the stack
+                self._instr(t, Op.LDA, arg)
+                self._instr(t, Op.PHA)
+
+                # advance the pointer to MSB:
+                ptr_lo = f'${hex(arg.loc)[2:]}'
+                ptr_hi = f'${hex(arg.loc + 1)[2:]}'
+                # ... add 1 to pointer's low address part
+                self._instr(t, Op.LDA, ptr_lo)
+                self._instr(t, Op.ADC, '#1')
+                self._instr(t, Op.STA, ptr_lo)
+                # ... add the carry to pointer's high address part
+                self._instr(t, Op.LDA, ptr_hi)
+                self._instr(t, Op.ADC, '#0')
+                self._instr(t, Op.STA, ptr_lo)
+
+                # load MSB into A and transfer it to X
+                self._instr(t, Op.LDA, arg)
+                self._instr(t, Op.TAX)
+
+                # pull LSB back into A
+                self._instr(t, Op.PLA)
+            else:
+                # load the byte into A by indirect indexing
+                self._ldx_offset(t, arg)
+                self._instr(t, Op.LDA, arg)
+
+        # pick the value from memory using absolute addressing
+        elif isinstance(arg.loc, int):
             self._instr(t, Op.LDA, arg)
+            if arg.size == 2:
+                self._instr(t, Op.LDX, arg + 1)
+
+        # an immediate, just fill the registers
         else:
-            # either immediate or memory
-            self._instr(t, Op.LDA, arg)
+            value = parse_int(arg.children[0])
+            self._instr(t, Op.LDA, f'#{value & 0xff}')
+            if arg.size == 2:
+                self._instr(t, Op.LDX, f'#{(value >> 8) & 0xff}')
 
         self._setloc(arg, Reg.A)
 
     def _load_ptr(self, t, loc):
-        # if the pointer is located on stack, copy the address to reserved
-        # zero-page location in order to perform indirect addressing
+        # if the pointer is located on stack, copy the address to a temporary
+        # pointer located at zero-page in order to perform indexed indirect
+        # addressing
         if isinstance(loc, StackOffset):
-            tmp_ptr_lo = hex(self.tmp_ptr)[2:]
-            tmp_ptr_hi = hex(self.tmp_ptr + 1)[2:]
-            self._setloc(t, loc)
-            self._pull(t, t)
-            self._instr(t, Op.STA, f'${tmp_ptr_lo}')
+            dst_ptr_lo = f'${hex(self.tmp_ptr)[2:]}'
+            dst_ptr_hi = f'${hex(self.tmp_ptr + 1)[2:]}'
 
-            self._setloc(t, StackOffset(loc + 1))
-            self._pull(t, t)
-            self._instr(t, Op.STA, f'${tmp_ptr_hi}')
+            # create two fake byte-sized "anchors" to the stack-located address
+            # LO and HI parts
+            addr_lo, addr_hi = Tree(None, []), Tree(None, [])
+            self._setloc(addr_lo, loc)
+            self._setsize(addr_lo, 1)
+            self._setloc(addr_hi, StackOffset(loc + 1))
+            self._setsize(addr_hi, 1)
+
+            # pull the LO part and store it into temporary pointer LO location
+            self._pull(t, addr_lo)
+            self._instr(t, Op.STA, dst_ptr_lo)
+
+            # pull the HI part and store it in related part of the temporary
+            # pointer
+            self._pull(t, addr_hi)
+            self._instr(t, Op.STA, dst_ptr_hi)
+
+            # now the location of the tree is the temporary pointer of the zero
+            # page memory
             self._setloc(t, Pointer(self.tmp_ptr))
+
+        # the pointer is in a global variable and is already in zero-page memory
         else:
-            # the pointer is in a global variable and is already in zero-page
-            # memory
             self._setloc(t, Pointer(loc))
 
     def _push_scope(self, t):
@@ -753,13 +880,10 @@ class CodeGenerator(Interpreter, Stage):
 
         setattr(t, 'loc', loc)
 
+    def _setsize(self, t, size):
+        setattr(t, 'size', size)
+
     def _instr(self, t, op, arg=None, label=None):
-
-        def parse_int(s):
-            if s.startswith('$'):
-                return int(s[1:], base=16)
-            return int(s, base=10)
-
         if op is None:
             # empty instruction, no mode
             mode = None
