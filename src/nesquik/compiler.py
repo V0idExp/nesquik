@@ -32,6 +32,11 @@ class NESQuikInvalidDereference(Exception):
     pass
 
 
+class NESQuikTypeMismatch(Exception):
+
+    pass
+
+
 class NESQuikInternalError(Exception):
 
     pass
@@ -359,19 +364,53 @@ class CodeGenerator(Interpreter, Stage):
             # be part of var's initialization and the name is not yet in the
             # scope
             loc = t.loc
+            is_ptr = name.startswith('*')
         else:
             # assigning to an existing var
-            loc = self._getvar(name).loc
+            var = self._getvar(name)
+            loc = var.loc
+            is_ptr = var.is_pointer
 
-        # evaluate the expression
-        self.visit(expr)
-        self._pull(t, expr)
+        # if assigning a result of address taking, ensure the target variable is
+        # a pointer and thus, can hold a word-sized value
+        if expr.data == 'getref':
+            if not is_ptr:
+                raise NESQuikTypeMismatch(f'trying to assign a reference to a non-pointer varaible "{name}"')
 
-        # save it to memory or stack variable
-        self._setloc(expr, loc)
-        if isinstance(loc, StackOffset):
-            self._ldy_offset(t, expr)
-        self._instr(t, Op.STA, expr)
+            # evaluate the reference take expression; A = LO, X = HI
+            self.visit(expr)
+
+            # assigning to a pointer on stack
+            if isinstance(loc, StackOffset):
+                loc_lo = loc
+                loc_hi = StackOffset(loc + 1)
+                self._setloc(expr, loc_lo)
+                self._ldy_offset(t, expr)
+                self._instr(t, Op.STA, expr)
+                self._instr(t, Op.TXA)
+                self._setloc(expr, loc_hi)
+                self._ldy_offset(t, expr)
+                self._instr(t, Op.STA, expr)
+
+            # assigning to a global pointer
+            else:
+                self._setloc(expr, loc)
+                self._instr(t, Op.STA, expr)
+                self._instr(t, Op.TXA)
+                self._setloc(expr, loc + 1)
+                self._instr(t, Op.STA, expr)
+
+        # normal byte-sized assignment
+        else:
+            # evaluate the expression
+            self.visit(expr)
+            self._pull(t, expr)
+
+            # save it to memory or stack variable
+            self._setloc(expr, loc)
+            if isinstance(loc, StackOffset):
+                self._ldy_offset(t, expr)
+            self._instr(t, Op.STA, expr)
 
     def mem_assign(self, t):
         name, expr = t.children
@@ -426,6 +465,36 @@ class CodeGenerator(Interpreter, Stage):
             raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
 
         self._load_ptr(t, var.loc)
+
+    def getref(self, t):
+        name = t.children[0].value
+        var = self._getvar(name)
+
+        # stack variable
+        if isinstance(var.loc, StackOffset):
+            self._instr(t, Op.CLC)
+
+            # add the stack offset to base pointer LO address and push the result to the stack
+            self._instr(t, Op.LDA, f'${hex(self.base_ptr)[2:]}')
+            self._instr(t, Op.ADC, f'#{var.loc}')
+            self._instr(t, Op.PHA)
+
+            # add the eventual carry to the base pointer HI address and move it to X
+            self._instr(t, Op.LDA, f'${hex(self.base_ptr + 1)[2:]}')
+            self._instr(t, Op.ADC, f'#0')
+            self._instr(t, Op.TAX)
+
+            # pop from the stack the LO address
+            self._instr(t, Op.PLA)
+
+        # global variable
+        else:
+            lo = var.loc & 0xff
+            hi = var.loc >> 8
+            self._instr(t, Op.LDA, f'#{lo}')
+            self._instr(t, Op.LDX, f'#{hi}')
+
+        self._setloc(t, Reg.A)
 
     def call(self, t):
         name = t.children[0].value
@@ -495,8 +564,12 @@ class CodeGenerator(Interpreter, Stage):
             for var in var_list:
                 name = var.children[0].value
                 is_pointer = name.startswith('*')
-                size = 2 if is_pointer else 1
-                loc = StackOffset(0xff + stack_offset)
+                if is_pointer:
+                    loc = StackOffset(0xff + stack_offset - 1)
+                    size = 2
+                else:
+                    loc = StackOffset(0xff + stack_offset)
+                    size = 1
                 stack_offset -= size
                 self._setloc(var, loc)
 
@@ -643,7 +716,8 @@ class CodeGenerator(Interpreter, Stage):
             self._setloc(t, loc)
             self._pull(t, t)
             self._instr(t, Op.STA, f'${tmp_ptr_lo}')
-            self._setloc(t, StackOffset(loc - 1))
+
+            self._setloc(t, StackOffset(loc + 1))
             self._pull(t, t)
             self._instr(t, Op.STA, f'${tmp_ptr_hi}')
             self._setloc(t, Pointer(self.tmp_ptr))

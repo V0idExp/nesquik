@@ -5,9 +5,9 @@ var a = 5
 var b = 4
 var c = 3
 
-var *p_a = $6
-var *p_b = $7
-var *p_c = $8
+var *p_a = &a
+var *p_b = &b
+var *p_c = &c
 
 func main():
     return (*p_a + *p_b) - *p_c
@@ -36,7 +36,7 @@ DEREF_LOCAL_PTR_TO_GLOBAL_VAR = '''
 var a = 10
 
 func main():
-    var *c = $6  # address of `a`
+    var *c = &a
     return *c
 '''
 
@@ -51,19 +51,19 @@ var b = 123
 var c = 222
 
 func main():
-    var *c = ${addr}
+    var *c = &{var}
     c = c + {offset}
     return *c
 '''
 
-@pytest.mark.parametrize('addr,offset,exp_result', [
-    (0x06, 1, 123),
-    (0x08, -2, 111),
-    (0x07, 0, 123),
-    (0x06, 2, 222),
+@pytest.mark.parametrize('var,offset,exp_result', [
+    ('a', 1, 123),
+    ('c', -2, 111),
+    ('b', 0, 123),
+    ('a', 2, 222),
 ])
-def test_deref_ptr_arithmetics(cpu, addr, offset, exp_result):
-    cpu.compile_and_run(DEREF_PTR_ARITHMETICS.format(addr=addr, offset=offset))
+def test_deref_ptr_arithmetics(cpu, var, offset, exp_result):
+    cpu.compile_and_run(DEREF_PTR_ARITHMETICS.format(var=var, offset=offset))
     assert cpu.a == exp_result
 
 
@@ -71,8 +71,7 @@ DEREF_PTR_IN_LOOP_EXPR = '''
 var a = 25
 
 func main():
-    # pointer to `a`
-    var *ptr = $6
+    var *ptr = &a
     var i = 0
 
     while *ptr > (4 - 4):       # this creates temps on stack
@@ -97,9 +96,9 @@ var b = 4
 var c = 3
 
 func main():
-    var *ptr_a = $6
-    var *ptr_b = $7
-    var *ptr_c = $8
+    var *ptr_a = &a
+    var *ptr_b = &b
+    var *ptr_c = &c
 
     return {expr}
 '''
@@ -124,14 +123,29 @@ def test_deref_ptr_in_expressions(cpu, expr, exp_result):
     assert cpu.a == exp_result
 
 
-ASSIGN_TO_MEMORY = '''
+ASSIGN_TO_GLOBAL_VIA_PTR = '''
 var a = 200
 
 func main():
-    var *ptr = $6
+    var *ptr = &a
     *ptr = 123
     return a
 '''
-def test_assign_to_memory(cpu):
-    cpu.compile_and_run(ASSIGN_TO_MEMORY)
+def test_assign_to_global_via_ptr(cpu):
+    cpu.compile_and_run(ASSIGN_TO_GLOBAL_VIA_PTR)
     assert cpu.a == 123
+
+
+LOCAL_PTRS_TO_LOCAL_VARS = '''
+func main():
+    var a = 5
+    var *ptr_a = &a
+    var b
+    var *ptr_b = &b
+    *ptr_b = *ptr_a * 2
+    return b
+'''
+
+def test_local_ptrs_to_local_vars(cpu):
+    cpu.compile_and_run(LOCAL_PTRS_TO_LOCAL_VARS)
+    assert cpu.a == 10

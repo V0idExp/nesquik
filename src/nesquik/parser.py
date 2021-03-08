@@ -71,6 +71,7 @@ _grammar = r'''
            | unop
            | call
            | "*" NAME                   -> deref
+           | "&" NAME                   -> getref
 
     PTRNAME: "*" NAME
 
