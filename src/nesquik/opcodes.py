@@ -16,8 +16,8 @@ class Op(Enum):
     DEX = 'dex'
     EOR = 'eor'
     INC = 'inc'
-    INY = 'iny'
     INX = 'inx'
+    INY = 'iny'
     JMP = 'jmp'
     JSR = 'jsr'
     LDA = 'lda'
@@ -54,9 +54,12 @@ class AddrMode(Enum):
 OPCODES = {
 #    Op      Address mode            Code  Size
     (Op.ADC, AddrMode.Immediate):   (0x69, 2),
+    (Op.ADC, AddrMode.IndirectX):   (0x61, 2),
     (Op.ADC, AddrMode.IndirectY):   (0x71, 2),
     (Op.ADC, AddrMode.Zeropage):    (0x65, 2),
     (Op.AND, AddrMode.Immediate):   (0x29, 2),
+    (Op.AND, AddrMode.IndirectX):   (0x21, 2),
+    (Op.AND, AddrMode.IndirectY):   (0x31, 2),
     (Op.AND, AddrMode.Zeropage):    (0x25, 2),
     (Op.ASL, AddrMode.Implied):     (0x0A, 1),
     (Op.ASL, AddrMode.Zeropage):    (0x06, 2),
@@ -67,13 +70,16 @@ OPCODES = {
     (Op.BRK, AddrMode.Implied):     (0x00, 1),
     (Op.CLC, AddrMode.Implied):     (0x18, 1),
     (Op.CMP, AddrMode.Immediate):   (0xC9, 2),
+    (Op.CMP, AddrMode.IndirectX):   (0xC1, 2),
     (Op.CMP, AddrMode.IndirectY):   (0xD1, 2),
     (Op.CMP, AddrMode.Zeropage):    (0xC5, 2),
     (Op.DEX, AddrMode.Implied):     (0xCA, 1),
     (Op.EOR, AddrMode.Immediate):   (0x49, 2),
+    (Op.EOR, AddrMode.IndirectX):   (0x41, 2),
+    (Op.EOR, AddrMode.IndirectY):   (0x51, 2),
     (Op.INC, AddrMode.Zeropage):    (0xE6, 2),
-    (Op.INY, AddrMode.Implied):     (0xC8, 1),
     (Op.INX, AddrMode.Implied):     (0xE8, 1),
+    (Op.INY, AddrMode.Implied):     (0xC8, 1),
     (Op.JMP, AddrMode.Absolute):    (0x4C, 3),
     (Op.JSR, AddrMode.Absolute):    (0x20, 3),
     (Op.LDA, AddrMode.Immediate):   (0xA9, 2),
@@ -92,12 +98,13 @@ OPCODES = {
     (Op.ROL, AddrMode.Zeropage):    (0x26, 2),
     (Op.RTS, AddrMode.Implied):     (0x60, 1),
     (Op.SBC, AddrMode.Immediate):   (0xE9, 2),
+    (Op.SBC, AddrMode.IndirectX):   (0xE1, 2),
     (Op.SBC, AddrMode.IndirectY):   (0xF1, 2),
     (Op.SBC, AddrMode.Zeropage):    (0xE5, 2),
     (Op.SEC, AddrMode.Implied):     (0x38, 1),
-    (Op.STA, AddrMode.Zeropage):    (0x85, 2),
     (Op.STA, AddrMode.IndirectX):   (0x81, 2),
     (Op.STA, AddrMode.IndirectY):   (0x91, 2),
+    (Op.STA, AddrMode.Zeropage):    (0x85, 2),
     (Op.STX, AddrMode.Zeropage):    (0x86, 2),
     (Op.STY, AddrMode.Zeropage):    (0x84, 2),
     (Op.TAX, AddrMode.Implied):     (0xAA, 1),

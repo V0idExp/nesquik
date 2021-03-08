@@ -109,7 +109,11 @@ class CodeGenerator(Interpreter, Stage):
     def sub(self, t):
         left, right = t.children
 
+        # evaluate right expression
         self.visit(right)
+        if isinstance(right.loc, Pointer):
+            self._pull(t, right)
+
         if right.loc is Reg.A:
             self._push(t)
 
@@ -134,6 +138,8 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.CLC)
         if isinstance(left.loc, StackOffset):
             self._ldy_offset(t, left)
+        elif isinstance(left.loc, Pointer):
+            self._ldx_offset(t, left)
         self._instr(t, Op.ADC, left)
         self._setloc(t, Reg.A)
 
@@ -288,13 +294,19 @@ class CodeGenerator(Interpreter, Stage):
         expr, body = t.children[0], t.children[1]
 
         self._instr(t, None, None, '@1')    # start of the loop
+        self._push_scope(t)
         self.visit(expr)
         self._pull(t, expr)
+        self._pop_scope(t)
+
         self._instr(t, Op.CMP, '#0')        # compare the expression result
         self._instr(t, Op.BNE, '@2')        # jump to body if non-zero
         self._instr(t, Op.JMP, '@0')        # jump to the end of the loop if zero
+
         self._instr(t, None, None, '@2')    # start of the body
+        self._push_scope(t)
         self.visit(body)
+        self._pop_scope(t)
         self._instr(t, Op.JMP, '@1')        # jump to the start of the loop
         self._instr(t, None, None, '@0')    # end of the loop
 
@@ -365,18 +377,26 @@ class CodeGenerator(Interpreter, Stage):
         if not var.is_pointer:
             raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
 
-        # prepare the pointer first
-        self._load_ptr(t, var.loc)
-
         # evaluate the expression
         self.visit(expr)
+        if isinstance(expr.loc, Pointer):
+            self._pull(t, expr)
+
+        if expr.loc is Reg.A:
+            self._push(t)
+
+        # prepare the pointer: in case of a pointer located on stack, its low
+        # and high parts will be copied to a temporary zero-page location for
+        # indirect X addressing, this operation overwrites A register
+        self._load_ptr(t, var.loc)
+        # load the X offset from zeropage to the pointer
+        self._ldx_offset(t, t)
+
+        # pull the expression to A
         self._pull(t, expr)
 
-        # store the expression in memory pointed to by the pointer using
-        # indirect indexed addressing via X register
-        self._setloc(expr, Pointer(var.loc))
-        self._instr(t, Op.LDX, f'#{t.loc}')
-        self._instr(t, Op.STA, expr)
+        # store it via indirect X addressing into the pointed memory location
+        self._instr(t, Op.STA, t)
 
     def imm(self, t):
         self._setloc(t, None)
@@ -476,9 +496,10 @@ class CodeGenerator(Interpreter, Stage):
                 stack_offset -= size
                 self._setloc(var, loc)
 
-                for _ in range(size):
+            locals_size = abs(stack_offset - self.scope_offsets[-1])
+            if locals_size > 0:
+                for _ in range(locals_size + 1):
                     self._instr(t, Op.DEX)
-
             self._instr(t, Op.TXS)
             self.scope_offsets[-1] = stack_offset
 
@@ -512,6 +533,9 @@ class CodeGenerator(Interpreter, Stage):
 
     def _cmp(self, t, left, right):
         self.visit(right)
+        if isinstance(right.loc, Pointer):
+            self._pull(t, right)
+
         if right.loc is Reg.A:
             self._push(t)
 
@@ -520,7 +544,8 @@ class CodeGenerator(Interpreter, Stage):
 
         if isinstance(right.loc, StackOffset):
             self._ldy_offset(t, right)
-
+        elif isinstance(right.loc, Pointer):
+            self._ldx_offset(t, right)
         self._instr(t, Op.CMP, right)
 
     def _gt(self, t, left, right):
@@ -559,6 +584,10 @@ class CodeGenerator(Interpreter, Stage):
         if isinstance(v.loc, StackOffset):
             self._instr(t, Op.LDY, f'#${hex(v.loc)[2:]}')
 
+    def _ldx_offset(self, t, v):
+        if isinstance(v.loc, Pointer):
+            self._instr(t, Op.LDX, f'#${hex(v.loc)[2:]}')
+
     def _push(self, t):
         v = self.registers.get(Reg.A)
         if v is not None:
@@ -595,8 +624,8 @@ class CodeGenerator(Interpreter, Stage):
             self._ldy_offset(t, arg)
             self._instr(t, Op.LDA, arg)
         elif isinstance(arg.loc, Pointer):
-            # use zero-page indirect indexing
-            self._instr(t, Op.LDX, f'#{arg.loc}')
+            # use zero-page indirect indexing to dereference a pointer
+            self._ldx_offset(t, arg)
             self._instr(t, Op.LDA, arg)
         else:
             # either immediate or memory
