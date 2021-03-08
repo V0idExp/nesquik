@@ -114,8 +114,11 @@ class CodeGenerator(Interpreter, Stage):
         self.visit(prg.ast)
 
     def ret(self, t):
-        self.visit_children(t)
-        self._pull(t, t.children[0])
+        expr = t.children[0]
+        self.visit(expr)
+        if expr.size != 1:
+            raise NESQuikSizeError(f'unsupported return value size')
+        self._pull(t, expr)
 
     def sub(self, t):
         left, right = t.children
