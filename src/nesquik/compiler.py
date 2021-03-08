@@ -113,7 +113,6 @@ class CodeGenerator(Interpreter, Stage):
         self.visit(right)
         if isinstance(right.loc, Pointer):
             self._pull(t, right)
-
         if right.loc is Reg.A:
             self._push(t)
 
@@ -121,7 +120,8 @@ class CodeGenerator(Interpreter, Stage):
         self._pull(t, left)
 
         self._instr(t, Op.SEC)
-        self._ldy_offset(t, right)
+        if isinstance(right.loc, StackOffset):
+            self._ldy_offset(t, right)
         self._instr(t, Op.SBC, right)
         self._setloc(t, Reg.A)
 
@@ -129,6 +129,8 @@ class CodeGenerator(Interpreter, Stage):
         left, right = t.children
 
         self.visit(left)
+        if isinstance(left.loc, Pointer):
+            self._pull(t, left)
         if left.loc is Reg.A:
             self._push(t)
 
@@ -138,8 +140,6 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.CLC)
         if isinstance(left.loc, StackOffset):
             self._ldy_offset(t, left)
-        elif isinstance(left.loc, Pointer):
-            self._ldx_offset(t, left)
         self._instr(t, Op.ADC, left)
         self._setloc(t, Reg.A)
 
@@ -159,6 +159,8 @@ class CodeGenerator(Interpreter, Stage):
         left, right = t.children
 
         self.visit(left)
+        if isinstance(left.loc, Pointer):
+            self._pull(t, left)
         if left.loc is Reg.A:
             self._push(t)
 
@@ -176,6 +178,8 @@ class CodeGenerator(Interpreter, Stage):
         left, right = t.children
 
         self.visit(right)
+        if isinstance(right.loc, Pointer):
+            self._pull(t, right)
         if right.loc is Reg.A:
             self._push(t)
 
@@ -535,7 +539,6 @@ class CodeGenerator(Interpreter, Stage):
         self.visit(right)
         if isinstance(right.loc, Pointer):
             self._pull(t, right)
-
         if right.loc is Reg.A:
             self._push(t)
 
@@ -544,8 +547,6 @@ class CodeGenerator(Interpreter, Stage):
 
         if isinstance(right.loc, StackOffset):
             self._ldy_offset(t, right)
-        elif isinstance(right.loc, Pointer):
-            self._ldx_offset(t, right)
         self._instr(t, Op.CMP, right)
 
     def _gt(self, t, left, right):

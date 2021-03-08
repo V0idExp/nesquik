@@ -91,6 +91,39 @@ def test_deref_ptr_in_loop_expr(cpu, code, exp_result):
     assert cpu.memory[0x06] == 0
 
 
+DEREF_PTR_IN_EXPRESSIONS = '''
+var a = 5
+var b = 4
+var c = 3
+
+func main():
+    var *ptr_a = $6
+    var *ptr_b = $7
+    var *ptr_c = $8
+
+    return {expr}
+'''
+
+@pytest.mark.parametrize('expr,exp_result', [
+    ('(*ptr_c + *ptr_b) - (*ptr_a)', 2),
+    ('(*ptr_b + *ptr_c) - (*ptr_a)', 2),
+    ('*ptr_b - *ptr_c + *ptr_a', 6),
+    ('(*ptr_b + *ptr_a) / *ptr_c', 3),
+    ('(*ptr_a * *ptr_b + 1) / *ptr_c', 7),
+    ('*ptr_a > *ptr_b', 1),
+    ('*ptr_a >= *ptr_b', 1),
+    ('*ptr_b == *ptr_a', 0),
+    ('*ptr_a == *ptr_b', 0),
+    ('*ptr_c < *ptr_b', 1),
+    ('*ptr_c <= *ptr_b', 1),
+    ('*ptr_c != *ptr_b', 1),
+    ('*ptr_b == *ptr_b', 1),
+])
+def test_deref_ptr_in_expressions(cpu, expr, exp_result):
+    cpu.compile_and_run(DEREF_PTR_IN_EXPRESSIONS.format(expr=expr))
+    assert cpu.a == exp_result
+
+
 ASSIGN_TO_MEMORY = '''
 var a = 200
 
