@@ -14,6 +14,7 @@ _grammar = r'''
     var_list: (_var_decl|COMMENT|_NL)*
 
     var: (PTRNAME|NAME) ["=" expression]
+       | NAME "[" NUMBER "]"            -> array
 
     _var_decl: "var" var ("," var)*
 
@@ -23,6 +24,7 @@ _grammar = r'''
               | while_stmt
               | assign
               | mem_assign
+              | index_assign
               | call
               | ret
               | "pass"
@@ -39,6 +41,8 @@ _grammar = r'''
     assign: NAME "=" expression
 
     mem_assign: PTRNAME "=" expression
+
+    index_assign: NAME "[" expression "]" "=" expression
 
     ret: "return" expression
 
@@ -65,13 +69,15 @@ _grammar = r'''
     ?unop: "-" factor                   -> neg
 
     ?factor: NAME                       -> ref
-           | HEXINT                     -> imm
-           | INT                        -> imm
+           | NUMBER                     -> imm
            | "(" expression ")"
            | unop
            | call
            | "*" NAME                   -> deref
            | "&" NAME                   -> getref
+           | NAME "[" expression "]"    -> index
+
+    NUMBER: HEXINT | INT
 
     PTRNAME: "*" NAME
 

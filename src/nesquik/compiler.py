@@ -37,6 +37,11 @@ class NESQuikSizeError(ValueError):
     pass
 
 
+class NESQuikStackOverflow(Exception):
+
+    pass
+
+
 class NESQuikInternalError(Exception):
 
     pass
@@ -79,6 +84,7 @@ class Variable:
     loc: int
     size: int
     is_pointer: bool
+    is_array: bool
 
 
 class Stage:
@@ -470,7 +476,7 @@ class CodeGenerator(Interpreter, Stage):
         # and high parts will be copied to a temporary zero-page location for
         # indirect X addressing;
         # this operation overwrites A register
-        self._load_ptr(t, var.loc)
+        self._load_ptr(t, var)
         # load the X offset from zeropage to the pointer
         self._ldx_offset(t, t)
 
@@ -505,6 +511,10 @@ class CodeGenerator(Interpreter, Stage):
            and reg_t.data in ('assign', 'var', 'ref')\
            and reg_t.children[0].value == name:
             self._setloc(t, Reg.A)
+        elif var.is_array:
+            # referencing an array involves actually generating a pointer to
+            # it's first byte
+            self._getref(t, var)
         else:
             self._setloc(t, loc)
 
@@ -516,38 +526,98 @@ class CodeGenerator(Interpreter, Stage):
         if not var.is_pointer:
             raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
 
-        self._load_ptr(t, var.loc)
+        self._load_ptr(t, var)
         self._setsize(t, 1)
+
+    def index(self, t):
+        # check whether the variable is defined and is a pointer
+        name = t.children[0].value
+        var = self._getvar(name)
+        if not var.is_pointer:
+            raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
+
+        # evaluate the index expression and push it to the stack
+        index_expr = t.children[1]
+        self.visit(index_expr)
+        if index_expr.size != 1:
+            # TODO: allow 16-bit indices
+            raise NESQuikSizeError(f'unsupported index size')
+        if isinstance(index_expr.loc, Pointer):
+            self._pull(t, index_expr)
+        if index_expr.loc is Reg.A:
+            self._push(t)
+
+        # copy the pointer to temporary zero-page loaction
+        self._load_ptr_to_tmp(t, var)
+
+        # get the index expression result into A
+        self._pull(t, index_expr)
+
+        # add it to the pointer LO part
+        lo, hi = f'${hex(t.loc)[2:]}', f'${hex(t.loc + 1)[2:]}'
+        self._instr(t, Op.CLC)
+        self._instr(t, Op.ADC, lo)
+        self._instr(t, Op.STA, lo)
+        # add the carry to the pointer HI part
+        self._instr(t, Op.LDA, hi)
+        self._instr(t, Op.ADC, '#0')
+        self._instr(t, Op.STA, hi)
+
+        self._setsize(t, 1)
+
+    def index_assign(self, t):
+        # check whether the variable is defined and is a pointer
+        name, index_expr, expr = t.children
+        var = self._getvar(name)
+        if not var.is_pointer:
+            raise NESQuikInvalidDereference(f'attempting to dereference a non-pointer variable "{name}"')
+
+        # evaluate the index expression and push it to the stack
+        self.visit(index_expr)
+        if index_expr.size != 1:
+            # TODO: allow 16-bit indices
+            raise NESQuikSizeError(f'unsupported index size')
+        if isinstance(index_expr.loc, Pointer):
+            self._pull(t, index_expr)
+        if index_expr.loc is Reg.A:
+            self._push(t)
+
+        # evaluate the assignment expression and push it to the stack
+        self.visit(expr)
+        if expr.size != 1:
+            raise NESQuikSizeError(f'unsupported assignment value size')
+        if isinstance(expr.loc, Pointer):
+            self._pull(t, expr)
+        if expr.loc is Reg.A:
+            self._push(t)
+
+        # copy the pointer to tmp location, since we're going to modify it
+        self._load_ptr_to_tmp(t, var)
+
+        # load the index result and add it to the pointer
+        self._pull(t, index_expr)
+
+        # LSB is in A, add it to the pointer LO part
+        lo, hi = f'${hex(t.loc)[2:]}', f'${hex(t.loc + 1)[2:]}'
+        self._instr(t, Op.CLC)
+        self._instr(t, Op.ADC, lo)
+        self._instr(t, Op.STA, lo)
+        # add the carry to the pointer HI part
+        self._instr(t, Op.LDA, hi)
+        self._instr(t, Op.ADC, '#0')
+        self._instr(t, Op.STA, hi)
+
+        # pull the assignment expression result to A
+        self._pull(t, expr)
+
+        # store it via indirect X addressing into the pointed memory location
+        self._ldx_offset(t, t)
+        self._instr(t, Op.STA, t)
 
     def getref(self, t):
         name = t.children[0].value
         var = self._getvar(name)
-
-        # stack variable
-        if isinstance(var.loc, StackOffset):
-            self._instr(t, Op.CLC)
-
-            # add the stack offset to base pointer LO address and push the result to the stack
-            self._instr(t, Op.LDA, f'${hex(self.base_ptr)[2:]}')
-            self._instr(t, Op.ADC, f'#{var.loc}')
-            self._instr(t, Op.PHA)
-
-            # add the eventual carry to the base pointer HI address and move it to X
-            self._instr(t, Op.LDA, f'${hex(self.base_ptr + 1)[2:]}')
-            self._instr(t, Op.ADC, f'#0')
-            self._instr(t, Op.TAX)
-
-            # pop from the stack the LO address
-            self._instr(t, Op.PLA)
-
-        # global variable
-        else:
-            lo = var.loc & 0xff
-            hi = var.loc >> 8
-            self._instr(t, Op.LDA, f'#{lo}')
-            self._instr(t, Op.LDX, f'#{hi}')
-
-        self._setloc(t, Reg.A)
+        self._getref(t, var)
         self._setsize(t, 2)
 
     def call(self, t):
@@ -564,6 +634,9 @@ class CodeGenerator(Interpreter, Stage):
         is_pointer = name.startswith('*')
         if is_pointer:
             name = name[1:]
+            size = 2
+        else:
+            size = 1
 
         scope = self.global_vars if not self.scope_vars else self.scope_vars[-1]
         if name in scope:
@@ -571,7 +644,7 @@ class CodeGenerator(Interpreter, Stage):
 
         if not self.scope_vars:
             # no pushed scopes, allocate a global variable
-            loc = self._alloc()
+            loc = self._alloc(size)
             self._setloc(t, loc)
             is_local = False
         else:
@@ -588,8 +661,45 @@ class CodeGenerator(Interpreter, Stage):
             tree=t,
             name=name,
             loc=loc,
-            size=2 if is_pointer else 1,
-            is_pointer=is_pointer)
+            size=size,
+            is_pointer=is_pointer,
+            is_array=False)
+
+        # map the name to variable's location in memory
+        if is_local:
+            self.scope_vars[-1][name] = var
+        else:
+            self.global_vars[name] = var
+
+    def array(self, t):
+        name = t.children[0].value
+
+        scope = self.global_vars if not self.scope_vars else self.scope_vars[-1]
+        if name in scope:
+            raise NESQuikRedefinedVariable(f'variable "{name}" is already defined')
+
+        size = parse_int(t.children[1].value)
+        if size > 0xff:
+            raise NESQuikSizeError(f'array size exceeds limits: {size}')
+
+        if not self.scope_vars:
+            # no pushed scopes, allocate a global variable
+            loc = self._alloc(size)
+            self._setloc(t, loc)
+            is_local = False
+        else:
+            # local variable, the location is a stack offset, assigned
+            # previously by func()
+            loc = t.loc
+            is_local = True
+
+        var = Variable(
+            tree=t,
+            name=name,
+            loc=loc,
+            size=size,
+            is_pointer=True,
+            is_array=True)
 
         # map the name to variable's location in memory
         if is_local:
@@ -612,27 +722,42 @@ class CodeGenerator(Interpreter, Stage):
         # create a new scope
         self._push_scope(t)
 
-        # reserve stack space for local variables by decrementing SP register
+        # reserve stack space for local variables by decrementing SP register by
+        # the total size of all locals
         var_list = self._get_child(t, 'var_list').children
         if var_list:
             stack_offset = self.scope_offsets[-1]
             for var in var_list:
                 name = var.children[0].value
-                is_pointer = name.startswith('*')
-                if is_pointer:
-                    loc = StackOffset(0xff + stack_offset - 1)
+                is_array = var.data == 'array'
+                is_pointer = name.startswith('*') or is_array
+                if is_array:
+                    size = parse_int(var.children[1])
+                elif is_pointer:
                     size = 2
                 else:
-                    loc = StackOffset(0xff + stack_offset)
                     size = 1
+                loc = StackOffset(0xff + stack_offset - (size - 1))
                 stack_offset -= size
                 self._setloc(var, loc)
 
             locals_size = abs(stack_offset - self.scope_offsets[-1])
             if locals_size > 0:
-                for _ in range(locals_size + 1):
-                    self._instr(t, Op.DEX)
-            self._instr(t, Op.TXS)
+                if locals_size > 0xff:
+                    raise NESQuikStackOverflow(f'stack overflow: function locals too large ({locals_size} bytes)')
+                # unless the function stack size is larger then 5 bytes, it's
+                # more space-time efficient to decrement the X register with
+                # plain `DEX` instructions
+                if locals_size <= 5:
+                    for _ in range(locals_size + 1):
+                        self._instr(t, Op.DEX)
+                # subtract with SBC via A the stack size and transfer it to X
+                else:
+                    self._instr(t, Op.TXA)
+                    self._instr(t, Op.SEC)
+                    self._instr(t, Op.SBC, f'#{locals_size + 1}')
+                    self._instr(t, Op.TAX)
+                self._instr(t, Op.TXS)
             self.scope_offsets[-1] = stack_offset
 
         # initialize the locals and add the body
@@ -710,8 +835,11 @@ class CodeGenerator(Interpreter, Stage):
 
         raise NESQuikUndefinedVariable(f'use of undefined variable {name}')
 
-    def _alloc(self):
-        return self.reserved + sum(var.size for var in self.global_vars.values())
+    def _alloc(self, size):
+        offset = self.reserved + sum(var.size for var in self.global_vars.values())
+        if offset + size > 255:
+            raise NESQuikSizeError(f'out of zero-page memory: cannot statically allocate {size} bytes')
+        return offset
 
     def _ldy_offset(self, t, v):
         if isinstance(v.loc, StackOffset):
@@ -790,6 +918,7 @@ class CodeGenerator(Interpreter, Stage):
                 ptr_hi = f'${hex(arg.loc + 1)[2:]}'
                 # ... add 1 to pointer's low address part
                 self._instr(t, Op.LDA, ptr_lo)
+                self._instr(t, Op.CLC)
                 self._instr(t, Op.ADC, '#1')
                 self._instr(t, Op.STA, ptr_lo)
                 # ... add the carry to pointer's high address part
@@ -812,7 +941,8 @@ class CodeGenerator(Interpreter, Stage):
         elif isinstance(arg.loc, int):
             self._instr(t, Op.LDA, arg)
             if arg.size == 2:
-                self._instr(t, Op.LDX, arg + 1)
+                self._setloc(arg, arg.loc + 1)
+                self._instr(t, Op.LDX, arg)
 
         # an immediate, just fill the registers
         else:
@@ -823,30 +953,63 @@ class CodeGenerator(Interpreter, Stage):
 
         self._setloc(arg, Reg.A)
 
-    def _load_ptr(self, t, loc):
+    def _getref(self, t, var):
+        # stack variable
+        if isinstance(var.loc, StackOffset):
+            # add the stack offset to base pointer LO address and push the result to the stack
+            self._instr(t, Op.LDA, f'${hex(self.base_ptr)[2:]}')
+            self._instr(t, Op.CLC)
+            self._instr(t, Op.ADC, f'#{var.loc}')
+            self._instr(t, Op.PHA)
+
+            # add the eventual carry to the base pointer HI address and move it to X
+            self._instr(t, Op.LDA, f'${hex(self.base_ptr + 1)[2:]}')
+            self._instr(t, Op.ADC, f'#0')
+            self._instr(t, Op.TAX)
+
+            # pop from the stack the LO address
+            self._instr(t, Op.PLA)
+
+        # global variable
+        else:
+            lo = var.loc & 0xff
+            hi = var.loc >> 8
+            self._instr(t, Op.LDA, f'#{lo}')
+            self._instr(t, Op.LDX, f'#{hi}')
+
+        self._setloc(t, Reg.A)
+
+    def _load_ptr(self, t, var):
         # if the pointer is located on stack, copy the address to a temporary
         # pointer located at zero-page in order to perform indexed indirect
         # addressing
-        if isinstance(loc, StackOffset):
-            dst_ptr_lo = f'${hex(self.tmp_ptr)[2:]}'
-            dst_ptr_hi = f'${hex(self.tmp_ptr + 1)[2:]}'
+        if isinstance(var.loc, StackOffset):
+            tmp_ptr_lo = f'${hex(self.tmp_ptr)[2:]}'
+            tmp_ptr_hi = f'${hex(self.tmp_ptr + 1)[2:]}'
 
-            # create two fake byte-sized "anchors" to the stack-located address
-            # LO and HI parts
-            addr_lo, addr_hi = Tree(None, []), Tree(None, [])
-            self._setloc(addr_lo, loc)
-            self._setsize(addr_lo, 1)
-            self._setloc(addr_hi, StackOffset(loc + 1))
-            self._setsize(addr_hi, 1)
+            if var.is_array:
+                # load into A, X the *stack location address*, at which the array begins
+                self._getref(t, var)
+                self._instr(t, Op.STA, tmp_ptr_lo)
+                self._instr(t, Op.TXA)
+                self._instr(t, Op.STA, tmp_ptr_hi)
+            else:
+                # create two fake byte-sized "anchors" to the stack-located address
+                # LO and HI parts
+                addr_lo, addr_hi = Tree(None, []), Tree(None, [])
+                self._setloc(addr_lo, var.loc)
+                self._setsize(addr_lo, 1)
+                self._setloc(addr_hi, StackOffset(var.loc + 1))
+                self._setsize(addr_hi, 1)
 
-            # pull the LO part and store it into temporary pointer LO location
-            self._pull(t, addr_lo)
-            self._instr(t, Op.STA, dst_ptr_lo)
+                # pull the LO part and store it into temporary pointer LO location
+                self._pull(t, addr_lo)
+                self._instr(t, Op.STA, tmp_ptr_lo)
 
-            # pull the HI part and store it in related part of the temporary
-            # pointer
-            self._pull(t, addr_hi)
-            self._instr(t, Op.STA, dst_ptr_hi)
+                # pull the HI part and store it in related part of the temporary
+                # pointer
+                self._pull(t, addr_hi)
+                self._instr(t, Op.STA, tmp_ptr_hi)
 
             # now the location of the tree is the temporary pointer of the zero
             # page memory
@@ -854,7 +1017,26 @@ class CodeGenerator(Interpreter, Stage):
 
         # the pointer is in a global variable and is already in zero-page memory
         else:
-            self._setloc(t, Pointer(loc))
+            self._setloc(t, Pointer(var.loc))
+
+    def _load_ptr_to_tmp(self, t, var):
+        if isinstance(var.loc, StackOffset):
+            self._load_ptr(t, var)
+        else:
+            tmp_ptr_lo = f'${hex(self.tmp_ptr)[2:]}'
+            tmp_ptr_hi = f'${hex(self.tmp_ptr + 1)[2:]}'
+
+            if var.is_array:
+                ptr_lo = f'#{var.loc}'
+                ptr_hi = f'#0'
+            else:
+                ptr_lo = f'${hex(var.loc)[2:]}'
+                ptr_hi = f'${hex(var.loc+ 1)[2:]}'
+            self._instr(t, Op.LDA, ptr_lo)
+            self._instr(t, Op.STA, tmp_ptr_lo)
+            self._instr(t, Op.LDA, ptr_hi)
+            self._instr(t, Op.STA, tmp_ptr_hi)
+            self._setloc(t, Pointer(self.tmp_ptr))
 
     def _push_scope(self, t):
         self.registers.clear()

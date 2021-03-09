@@ -183,3 +183,116 @@ func main():
 def test_ptrs_to_explicit_address(cpu):
     cpu.compile_and_run(PTRS_TO_EXPLICIT_ADDRESS)
     assert cpu.memory[0x2000] == 111
+
+
+PTR_AS_ARRAY_INDEXING = '''
+var a = 5
+var b = 6
+var c = 7
+
+func main():
+    var *arr = &a
+    return arr[1] + arr[2]  # b + c
+'''
+
+def test_ptr_as_array_indexing(cpu):
+    cpu.compile_and_run(PTR_AS_ARRAY_INDEXING)
+    assert cpu.a == 13
+
+
+PTR_AS_ARRAY_INDEXING_ITER = '''
+var a = 5
+var b = 6
+var c = 7
+var d = 8
+
+func main():
+    var acc = 0
+    var *values = &a
+    var i = 0
+    while i < 4:
+        acc = acc + values[i]
+        i = i + 1
+    return acc
+'''
+
+def test_ptr_as_array_indexing_iter(cpu):
+    cpu.compile_and_run(PTR_AS_ARRAY_INDEXING_ITER)
+    assert cpu.a == 26
+
+
+PTR_AS_ARRAY_STACK_VALUES = '''
+func main():
+    var a = 5
+    var b = 6
+    var c = 7
+    var d = 8
+    var i = 0
+    var acc = 0
+    var *stack_values = &d  # stack grows down, last value as pivot
+    while i < 4:
+        acc = acc + stack_values[i]
+        i = i + 1
+    return acc
+'''
+def test_ptr_as_array_stack_values(cpu):
+    cpu.compile_and_run(PTR_AS_ARRAY_STACK_VALUES)
+    assert cpu.a == 26
+
+
+PTR_AS_ARRAY_INDEXED_ASSIGNING = '''
+var *mem = $10
+var i = 0
+func main():
+    while i < 4:
+        mem[i] = 5 + i
+        i = i + 1
+'''
+def test_ptr_as_array_indexed_assigning(cpu):
+    cpu.compile_and_run(PTR_AS_ARRAY_INDEXED_ASSIGNING)
+    assert sum(cpu.memory[0x10:0x14]) == 26
+
+
+PTR_AS_ARRAY_TEMPS_IN_INDEX_EXPR = '''
+var *mem = $10
+func main():
+    mem[1] = 4
+    mem[mem[1] - 3] = $aa
+'''
+def test_ptr_as_array_temps_in_index_expr(cpu):
+    cpu.compile_and_run(PTR_AS_ARRAY_TEMPS_IN_INDEX_EXPR)
+    assert cpu.memory[0x11] == 0xaa
+
+
+ZERO_PAGE_ARRAYS = '''
+var arr1[5]
+var arr2[5]
+var *ptr = arr2
+
+func main():
+    ptr[0] = 7
+    arr2[1] = 8
+    ptr[2] = 9
+'''
+def test_zero_page_arrays(cpu):
+    cpu.compile_and_run(ZERO_PAGE_ARRAYS)
+    # first array starts at zp address $06, second on $0b
+    assert cpu.memory[0x0b] == 7
+    assert cpu.memory[0x0c] == 8
+    assert cpu.memory[0x0d] == 9
+
+
+STACK_ARRAYS = '''
+func main():
+    var arr1[5]
+    var arr2[5]
+    var *ptr = arr2
+    arr1[0] = 3
+    arr2[0] = 2
+    ptr[1] = 1
+'''
+def test_stack_arrays(cpu):
+    cpu.compile_and_run(STACK_ARRAYS)
+    assert cpu.memory[0x1f8] == 3
+    assert cpu.memory[0x1f3] == 2
+    assert cpu.memory[0x1f4] == 1
