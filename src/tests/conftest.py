@@ -8,6 +8,8 @@ class CPU(MPU):
 
     def __init__(self):
         super().__init__()
+        # NOTE: change this value to the number of reserved compiler bytes
+        self.zp_offset = 0x08
 
     def compile(self, code):
         self.reset()

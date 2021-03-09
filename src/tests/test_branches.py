@@ -53,7 +53,7 @@ def test_if_elif_else(cpu, code, conditions, exp_results):
     for i, expr in enumerate(conditions):
         cpu.compile_and_run(code.format(expr=expr))
         exp_result = exp_results[i]
-        assert cpu.a == exp_result
+        assert cpu.y == exp_result
 
 
 NESTED_IF_ELIF_TEST_CODE = '''
@@ -83,4 +83,4 @@ func main():
 def test_if_elif_else_nested(cpu, a_val, result):
     code = NESTED_IF_ELIF_TEST_CODE.format(a_val=a_val)
     cpu.compile_and_run(code)
-    assert cpu.a == result
+    assert cpu.y == result

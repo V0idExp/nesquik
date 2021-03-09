@@ -15,7 +15,7 @@ func main():
 
 def test_global_ptrs_to_global_vars(cpu):
     cpu.compile_and_run(GLOBAL_PTRS_TO_GLOBAL_VARS)
-    assert cpu.a == 6
+    assert cpu.y == 6
 
 
 PTR_AS_VALUE_IN_EXPRESSIONS = '''
@@ -30,7 +30,7 @@ func main():
 @pytest.mark.skip(reason='need 16 bit arithmetics')
 def test_ptr_as_value_in_expressions(cpu):
     cpu.compile_and_run(PTR_AS_VALUE_IN_EXPRESSIONS)
-    assert cpu.a == 6
+    assert cpu.y == 6
 
 
 DEREF_LOCAL_PTR_TO_GLOBAL_VAR = '''
@@ -43,7 +43,7 @@ func main():
 
 def test_deref_local_ptr_to_global_var(cpu):
     cpu.compile_and_run(DEREF_LOCAL_PTR_TO_GLOBAL_VAR)
-    assert cpu.a == 10
+    assert cpu.y == 10
 
 
 DEREF_PTR_ARITHMETICS = '''
@@ -66,7 +66,7 @@ func main():
 ])
 def test_deref_ptr_arithmetics(cpu, var, offset, exp_result):
     cpu.compile_and_run(DEREF_PTR_ARITHMETICS.format(var=var, offset=offset))
-    assert cpu.a == exp_result
+    assert cpu.y == exp_result
 
 
 DEREF_PTR_IN_LOOP_EXPR = '''
@@ -88,8 +88,8 @@ func main():
 ])
 def test_deref_ptr_in_loop_expr(cpu, code, exp_result):
     cpu.compile_and_run(code)
-    assert cpu.a == exp_result
-    assert cpu.memory[0x06] == 0
+    assert cpu.y == exp_result
+    assert cpu.memory[cpu.zp_offset] == 0
 
 
 DEREF_PTR_IN_EXPRESSIONS = '''
@@ -122,7 +122,7 @@ func main():
 ])
 def test_deref_ptr_in_expressions(cpu, expr, exp_result):
     cpu.compile_and_run(DEREF_PTR_IN_EXPRESSIONS.format(expr=expr))
-    assert cpu.a == exp_result
+    assert cpu.y == exp_result
 
 
 ASSIGN_TO_GLOBAL_VIA_PTR = '''
@@ -135,7 +135,7 @@ func main():
 '''
 def test_assign_to_global_via_ptr(cpu):
     cpu.compile_and_run(ASSIGN_TO_GLOBAL_VIA_PTR)
-    assert cpu.a == 123
+    assert cpu.y == 123
 
 
 LOCAL_PTRS_TO_LOCAL_VARS = '''
@@ -150,7 +150,7 @@ func main():
 
 def test_local_ptrs_to_local_vars(cpu):
     cpu.compile_and_run(LOCAL_PTRS_TO_LOCAL_VARS)
-    assert cpu.a == 10
+    assert cpu.y == 10
 
 
 PTR_ASSIGNMENT = '''
@@ -171,7 +171,7 @@ func main():
 
 def test_ptr_assignment(cpu):
     cpu.compile_and_run(PTR_ASSIGNMENT)
-    assert cpu.a == 40
+    assert cpu.y == 40
 
 
 PTRS_TO_EXPLICIT_ADDRESS = '''
@@ -197,7 +197,7 @@ func main():
 
 def test_ptr_as_array_indexing(cpu):
     cpu.compile_and_run(PTR_AS_ARRAY_INDEXING)
-    assert cpu.a == 13
+    assert cpu.y == 13
 
 
 PTR_AS_ARRAY_INDEXING_ITER = '''
@@ -218,7 +218,7 @@ func main():
 
 def test_ptr_as_array_indexing_iter(cpu):
     cpu.compile_and_run(PTR_AS_ARRAY_INDEXING_ITER)
-    assert cpu.a == 26
+    assert cpu.y == 26
 
 
 PTR_AS_ARRAY_STACK_VALUES = '''
@@ -237,7 +237,7 @@ func main():
 '''
 def test_ptr_as_array_stack_values(cpu):
     cpu.compile_and_run(PTR_AS_ARRAY_STACK_VALUES)
-    assert cpu.a == 26
+    assert cpu.y == 26
 
 
 PTR_AS_ARRAY_INDEXED_ASSIGNING = '''
@@ -276,10 +276,11 @@ func main():
 '''
 def test_zero_page_arrays(cpu):
     cpu.compile_and_run(ZERO_PAGE_ARRAYS)
-    # first array starts at zp address $06, second on $0b
-    assert cpu.memory[0x0b] == 7
-    assert cpu.memory[0x0c] == 8
-    assert cpu.memory[0x0d] == 9
+    first_addr = cpu.zp_offset
+    second_addr = first_addr + 5
+    assert cpu.memory[second_addr] == 7
+    assert cpu.memory[second_addr + 1] == 8
+    assert cpu.memory[second_addr + 2] == 9
 
 
 STACK_ARRAYS = '''

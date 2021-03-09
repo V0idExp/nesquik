@@ -16,7 +16,7 @@ func main():
 
 def test_simple_funcs(cpu):
     cpu.compile_and_run(SIMPLE_FUNCS)
-    assert cpu.a == 30
+    assert cpu.y == 30
 
 
 FUNCS_WITH_LOCALS = '''
@@ -53,7 +53,7 @@ def test_funcs_with_locals(cpu, a, b):
     exp_result = max(a, b)
     if exp_result < 0:
         exp_result += 256
-    assert cpu.a == exp_result
+    assert cpu.y == exp_result
 
 
 FUNCS_WITH_GLOBALS_SHADOWING = '''
@@ -87,6 +87,42 @@ func main():
 
 def test_funcs_with_globals_shadowing(cpu):
     cpu.compile_and_run(FUNCS_WITH_GLOBALS_SHADOWING)
-    assert cpu.a == 150
-    assert cpu.memory[0x06] == 15  # check global `a`
-    assert cpu.memory[0x07] == 10  # check global `b`
+    assert cpu.y == 150
+    assert cpu.memory[cpu.zp_offset] == 15      # check global `a`
+    assert cpu.memory[cpu.zp_offset + 1] == 10  # check global `b`
+
+
+FUNCS_WITH_8BIT_ARGS = '''
+func sum(a, b):
+    return a + b
+
+func main():
+    var v1 = 4
+    var v2 = 3
+    return sum(v1, v2)
+'''
+def test_funcs_with_8bit_args(cpu):
+    cpu.compile_and_run(FUNCS_WITH_8BIT_ARGS)
+    assert cpu.y == 7
+
+
+FUNCS_WITH_PTR_ARGS = '''
+func sum_array(*p, size):
+    var sum = 0
+    var i = 0
+    while i < size:
+        sum = sum + p[i]
+        i = i + 1
+    return sum
+
+func main():
+    var arr[3]
+    arr[0] = 5
+    arr[1] = 4
+    arr[2] = 3
+    return sum_array(arr, 3)
+
+'''
+def test_funcs_with_ptr_args(cpu):
+    cpu.compile_and_run(FUNCS_WITH_PTR_ARGS)
+    assert cpu.y == 12

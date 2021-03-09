@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from itertools import count
+from typing import List
 
 from lark.tree import Tree
 from lark.visitors import Interpreter
@@ -52,6 +53,11 @@ class NESQuikUndefinedFunction(Exception):
     pass
 
 
+class NESQuikBadArgs(Exception):
+
+    pass
+
+
 class Program:
 
     def __init__(self, ast, org):
@@ -73,18 +79,27 @@ class StackOffset(int):
     pass
 
 
+class ArgumentOffset(StackOffset):
+    pass
+
+
 class Pointer(int):
     pass
 
 
 @dataclass
 class Variable:
-    tree: Tree
     name: str
     loc: int
     size: int
     is_pointer: bool
     is_array: bool
+
+
+@dataclass
+class Function:
+    name: str
+    args: List[Variable]
 
 
 class Stage:
@@ -107,13 +122,14 @@ class CodeGenerator(Interpreter, Stage):
         self.registers = {}
         self.global_vars = {}
         self.functions = {}
-        self.reserved = 6
         self.label_counter = count()
         self.required = {}
         self.scope_offsets = [0]
         self.scope_vars = []
         self.base_ptr = 0x02
-        self.tmp_ptr = 0x04
+        self.arg_base_ptr = 0x04
+        self.tmp_ptr = 0x06
+        self.reserved = 8
 
     def exec(self, prg):
         self.prg = prg
@@ -125,6 +141,7 @@ class CodeGenerator(Interpreter, Stage):
         if expr.size != 1:
             raise NESQuikSizeError(f'unsupported return value size')
         self._pull(t, expr)
+        self._instr(t, Op.TAY)
 
     def sub(self, t):
         left, right = t.children
@@ -366,11 +383,19 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, None, None, '@0')    # end of the loop
 
     def start(self, t):
-        # initialize base pointer HI part (always 0, wraps around on indexed
-        # addressing)
+        # initialize base pointer HI part
+        # NOTE: always 0, wraps around on negative stack indexing for accessing
+        # locals
         bp_hi = hex(self.base_ptr + 1)[2:]
         self._instr(t, Op.LDA, '#$00')
         self._instr(t, Op.STA, f'${bp_hi}')
+
+        # initialize arguments base pointer HI part
+        # NOTE: always 1, used for positive stack indexing for accessing
+        # arguments
+        arg_bp_hi = f'${hex(self.arg_base_ptr + 1)[2:]}'
+        self._instr(t, Op.LDA, '#$01')
+        self._instr(t, Op.STA, arg_bp_hi)
 
         # define global variables
         var_list = self._get_child(t, 'var_list')
@@ -385,8 +410,6 @@ class CodeGenerator(Interpreter, Stage):
         func_list = self._get_child(t, 'func_list')
         for func in func_list.children:
             self.visit(func)
-            name = func.children[0].value
-            self.functions[name] = func
 
         if 'main' not in self.functions:
             raise NESQuikUndefinedFunction(f'function "main" required but not defined')
@@ -431,7 +454,7 @@ class CodeGenerator(Interpreter, Stage):
             # assigning to a stack variable
             if isinstance(loc, StackOffset):
                 loc_lo = loc
-                loc_hi = StackOffset(loc + 1)
+                loc_hi = type(loc)(loc + 1)
                 self._setloc(expr, loc_lo)
                 self._ldy_offset(t, expr)
                 self._instr(t, Op.STA, expr)
@@ -622,10 +645,45 @@ class CodeGenerator(Interpreter, Stage):
 
     def call(self, t):
         name = t.children[0].value
-        if name not in self.functions:
+        try:
+            func = self.functions[name]
+        except KeyError:
             raise NESQuikUndefinedFunction(f'function "{name}" called but not defined')
 
+        args = t.children[1:]
+        if len(args) != len(func.args):
+            raise NESQuikBadArgs(f'attempting to call function "{name}" with wrong arguments')
+
+        # evaluate and push the arguments in order
+        for i, arg_expr in enumerate(args):
+            arg_t = func.args[i]
+            self.visit(arg_expr)
+            if arg_t.size != arg_expr.size:
+                raise NESQuikBadArgs(
+                    f'bad call to function "{name}": '
+                    f'mismatching size for argument #{i + 1} "{arg_t.name}"')
+
+            self._pull(t, arg_expr)
+            if arg_expr.size == 2:
+                self._instr(t, Op.TAY)
+                self._instr(t, Op.TXA)
+                self._instr(t, Op.PHA)
+                self._instr(t, Op.TYA)
+                self._instr(t, Op.PHA)
+            else:
+                self._instr(t, Op.PHA)
+
         self._instr(t, Op.JSR, name)
+
+        if args:
+            # restore the stack pointer
+            self._instr(t, Op.TSX)
+            for _ in range(sum(arg.size for arg in args)):
+                self._instr(t, Op.DEX)
+            self._instr(t, Op.TXS)
+
+        self._instr(t, Op.TYA)
+
         self._setloc(t, Reg.A)
         self._setsize(t, 1)
 
@@ -658,7 +716,6 @@ class CodeGenerator(Interpreter, Stage):
             self.assign(t, size=2 if is_pointer else 1)
 
         var = Variable(
-            tree=t,
             name=name,
             loc=loc,
             size=size,
@@ -694,7 +751,6 @@ class CodeGenerator(Interpreter, Stage):
             is_local = True
 
         var = Variable(
-            tree=t,
             name=name,
             loc=loc,
             size=size,
@@ -708,9 +764,37 @@ class CodeGenerator(Interpreter, Stage):
             self.global_vars[name] = var
 
     def func(self, t):
+        # TODO:
+        # 1) optimization: do not generate stack saving/restoring code if the
+        #    function doesn't have any args, locals or temporaries
+        # 2) do not generate return value save to Y and restore to A if the
+        #    function does not return any values
+
         # function entry label
         name = t.children[0].value
         self._instr(t, None, None, name)
+
+        # process arguments
+        arg_list = self._get_child(t, 'arg_list').children
+        args = []
+        for arg in arg_list:
+            arg_name = arg.children[0].value
+            is_pointer = arg.children[0].type == 'PTRNAME'
+            if is_pointer:
+                size = 2
+                arg_name = arg_name[1:]
+            else:
+                size = 1
+
+            args.append(Variable(arg_name, -1, size, is_pointer, False))
+
+        # assign locations on stack in reverse order
+        arg_offset = 3  # offset bp + ret_lo + ret_hi bytes
+        for arg in reversed(args):
+            arg.loc = ArgumentOffset(arg_offset)
+            arg_offset += size
+
+        self.functions[name] = Function(name, args)
 
         # save current stack pointer as base pointer
         bp_lo = hex(self.base_ptr)[2:]
@@ -719,8 +803,16 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.PHA)
         self._instr(t, Op.STX, f'${bp_lo}')
 
+        # if the function expects arguments, prepare also the arguments pointer
+        if args:
+            arg_bp_lo = hex(self.arg_base_ptr)[2:]
+            self._instr(t, Op.STX, f'${arg_bp_lo}')
+
         # create a new scope
         self._push_scope(t)
+
+        # add arguments to it
+        self.scope_vars[-1].update({arg.name: arg for arg in args})
 
         # reserve stack space for local variables by decrementing SP register by
         # the total size of all locals
@@ -767,9 +859,6 @@ class CodeGenerator(Interpreter, Stage):
         # below before return
         self._pop_scope(t, restore_stack=False)
 
-        # save A to Y
-        self._instr(t, Op.TAY)
-
         # restore stack pointer
         self._instr(t, Op.LDX, f'${bp_lo}')
         self._instr(t, Op.DEX)
@@ -777,8 +866,9 @@ class CodeGenerator(Interpreter, Stage):
         self._instr(t, Op.PLA)
         self._instr(t, Op.STA, f'${bp_lo}')
 
-        # restore A
-        self._instr(t, Op.TYA)
+        # restore args stack pointer too
+        if args:
+            self._instr(t, Op.STA, f'${arg_bp_lo}')
 
         self._instr(t, Op.RTS)
 
@@ -856,7 +946,7 @@ class CodeGenerator(Interpreter, Stage):
                 # do not push on stack refs to variables, since they're already
                 # in memory
                 name = v.children[0].value
-                self._setloc(v, self._getvar(name)).loc
+                self._setloc(v, self._getvar(name).loc)
             else:
                 # use the current scope's stack offset
                 stack_offset = self.scope_offsets[-1]
@@ -886,7 +976,7 @@ class CodeGenerator(Interpreter, Stage):
         elif isinstance(arg.loc, StackOffset):
             if arg.size == 2:
                 loc_lo = arg.loc
-                loc_hi = StackOffset(loc_lo + 1)
+                loc_hi = type(arg.loc)(loc_lo + 1)
 
                 # pull the MSB first from higher byte and store it to X
                 self._setloc(arg, loc_hi)
@@ -999,7 +1089,7 @@ class CodeGenerator(Interpreter, Stage):
                 addr_lo, addr_hi = Tree(None, []), Tree(None, [])
                 self._setloc(addr_lo, var.loc)
                 self._setsize(addr_lo, 1)
-                self._setloc(addr_hi, StackOffset(var.loc + 1))
+                self._setloc(addr_hi, type(var.loc)(var.loc + 1))
                 self._setsize(addr_hi, 1)
 
                 # pull the LO part and store it into temporary pointer LO location
@@ -1111,7 +1201,10 @@ class CodeGenerator(Interpreter, Stage):
                 mode = AddrMode.Immediate
                 arg = parse_int(arg.children[0])
             else:
-                if isinstance(arg.loc, StackOffset):
+                if isinstance(arg.loc, ArgumentOffset):
+                    mode = AddrMode.IndirectY
+                    arg = self.arg_base_ptr
+                elif isinstance(arg.loc, StackOffset):
                     mode = AddrMode.IndirectY
                     arg = self.base_ptr
                 elif isinstance(arg.loc, Pointer):

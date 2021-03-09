@@ -35,4 +35,4 @@ import pytest
 def test_expressions(cpu, code, exp_result):
     main_wrapper = f'func main():\n\t{code}\n'
     cpu.compile_and_run(main_wrapper)
-    assert cpu.a == exp_result
+    assert cpu.y == exp_result

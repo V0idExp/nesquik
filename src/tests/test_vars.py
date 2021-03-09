@@ -79,7 +79,7 @@ from nesquik.compiler import NESQuikUndefinedVariable
 ])
 def test_vars(cpu, code, exp_result):
     cpu.compile_and_run(code)
-    assert cpu.a == exp_result
+    assert cpu.y == exp_result
 
 
 @pytest.mark.parametrize('code', [

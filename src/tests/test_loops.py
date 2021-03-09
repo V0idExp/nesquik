@@ -10,7 +10,7 @@ func main():
 
 def test_while(cpu):
     cpu.compile_and_run(WHILE_CODE)
-    assert cpu.a == 10
+    assert cpu.y == 10
 
 WHILE_TRUE = '''
 func main():

@@ -9,7 +9,11 @@ _grammar = r'''
 
     func_list: (func|COMMENT|_NL)*
 
-    func: "func" NAME "(" ")" ":" _NL _INDENT var_list _statement_list _DEDENT
+    func: "func" NAME "(" arg_list ")" ":" _NL _INDENT var_list _statement_list _DEDENT
+
+    arg_list: (arg ("," arg)*)?
+
+    arg: PTRNAME | NAME
 
     var_list: (_var_decl|COMMENT|_NL)*
 
@@ -57,7 +61,7 @@ _grammar = r'''
         | expression "==" expression    -> eq
         | expression "!=" expression    -> neq
 
-    call: NAME "(" ")"
+    call: NAME "(" (expression ("," expression)*)? ")"
 
     ?binop: expression "+" term         -> add
           | expression "-" term         -> sub
