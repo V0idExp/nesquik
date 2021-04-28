@@ -5,8 +5,6 @@ from lark.visitors import Interpreter
 
 class Op(Enum):
 
-    IMM8    = 'imm8'
-    IMM16   = 'imm16'
     ALLOC   = 'alloc'
     ADD     = '+'
     SUB     = '-'
@@ -18,10 +16,28 @@ class Op(Enum):
     GT      = '>'
     LEQ     = '<='
     LT      = '<'
-    IF_Z    = 'if_zero'
-    IF_NZ   = 'if_nonzero'
-    GOTO    = 'goto'
+    IF_Z    = 'if_z'
+    IF_NZ   = 'if_nz'
+    JMP     = 'jmp'
+    RET     = 'ret'
     EMPTY   = ''
+
+
+class Location(Enum):
+
+    IMMEDIATE = 'immediate'
+    REGISTER = 'register'
+    CODE = 'code'
+
+
+class Value:
+
+    def __init__(self, loc: Location, value: int):
+        self.loc = loc
+        self.value = value
+
+    def __str__(self):
+        return f'{self.value}'
 
 
 class TAC:
@@ -53,7 +69,7 @@ class Branch(TAC):
 class Goto(TAC):
 
     def __init__(self, label):
-        super().__init__(Op.GOTO, label, None)
+        super().__init__(Op.JMP, label, None)
 
 
 class Label(TAC):
@@ -62,11 +78,17 @@ class Label(TAC):
         super().__init__(Op.EMPTY, None, None, None, label)
 
 
+class Return(TAC):
+
+    def __init__(self, expr):
+        super().__init__(Op.RET, None, expr, None, None)
+
+
 class IRGenerator(Interpreter):
 
     def __init__(self):
         self.code = []
-        self.tmpcounter = count()
+        self.regcounter = count()
         self.lblcounter = count()
 
     def exec(self, prg):
@@ -80,16 +102,7 @@ class IRGenerator(Interpreter):
         else:
             val = int(s, base=10)
 
-        if val <= 0xff:
-            op = Op.IMM8
-        elif val <= 0xffff:
-            op = Op.IMM16
-        else:
-            raise ValueError(f'value "{s}" is too large')
-
-        loc = self._alloc()
-        self.code.append(Assignment(op, loc, val))
-        self._setloc(t, loc)
+        self._setval(t, Value(Location.IMMEDIATE, val))
 
     def sub(self, t):
         self._binop(t, Op.SUB)
@@ -122,7 +135,7 @@ class IRGenerator(Interpreter):
         self._binop(t, Op.LT)
 
     def if_stmt(self, t):
-        labels = [self._alloc_label() for _ in range(len(t.children))]
+        labels = [Value(Location.CODE, self._alloc_label()) for _ in range(len(t.children))]
         end_label = labels[-1]
 
         for i, branch in enumerate(t.children):
@@ -135,7 +148,7 @@ class IRGenerator(Interpreter):
             if len(branch.children) > 1:
                 cond, body = branch.children
                 self.visit(cond)
-                self.code.append(Branch(False, labels[i], cond.loc))
+                self.code.append(Branch(False, labels[i], cond.val))
                 self.visit(body)
 
                 if not is_last_branch:
@@ -147,19 +160,25 @@ class IRGenerator(Interpreter):
 
         self.code.append(Label(end_label))
 
-    def _alloc(self):
-        return f'%{next(self.tmpcounter)}'
+    def ret(self, t):
+        self.visit_children(t)
+        expr = t.children[0]
+        self.code.append(Return(expr.val))
+
+    def _alloc_reg(self):
+        return next(self.regcounter)
 
     def _alloc_label(self):
-        return f'@{next(self.lblcounter)}'
+        return next(self.lblcounter)
 
     def _binop(self, t, op):
         left, right = t.children
         self.visit_children(t)
 
-        loc = self._alloc()
-        self.code.append(BinOp(op, loc, left.loc, right.loc))
-        self._setloc(t, loc)
+        reg = self._alloc_reg()
+        value = Value(Location.REGISTER, reg)
+        self.code.append(BinOp(op, value, left.val, right.val))
+        self._setval(t, value)
 
-    def _setloc(self, t, loc):
-        setattr(t, 'loc', loc)
+    def _setval(self, t, val):
+        setattr(t, 'val', val)
