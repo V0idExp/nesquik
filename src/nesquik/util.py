@@ -1,6 +1,6 @@
 import colorama as color
 
-from nesquik.ir_generator import Op, Location, TAC
+from nesquik.tac import Op, Location, TAC
 
 
 def _fmt_padding(tac):

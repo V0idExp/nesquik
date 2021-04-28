@@ -3,6 +3,8 @@ from pprint import pprint
 from lark import Lark
 from lark.indenter import Indenter
 
+from nesquik.classes import Program, Stage
+
 
 _grammar = r'''
     start: var_list func_list
@@ -103,7 +105,7 @@ _grammar = r'''
 '''
 
 
-class TreeIndenter(Indenter):
+class _TreeIndenter(Indenter):
 
     NL_type = '_NL'
     OPEN_PAREN_types = []
@@ -113,14 +115,20 @@ class TreeIndenter(Indenter):
     tab_len = 4
 
 
-_parser = Lark(_grammar, parser='lalr', propagate_positions=True, postlex=TreeIndenter(), debug=True)
+_parser = Lark(_grammar, parser='lalr', propagate_positions=True, postlex=_TreeIndenter(), debug=True)
 
 
-def parse(code, transforms=None):
-    ast = _parser.parse(code)
+class Parser(Stage):
 
-    for cls in transforms or []:
-        t = cls()
-        ast = t.transform(ast)
+    def __init__(self, transforms=None):
+        self.transforms = transforms or []
 
-    return ast
+    def exec(self, prg: Program):
+
+        ast = _parser.parse(prg.source)
+
+        for cls in self.transforms:
+            t = cls()
+            ast = t.transform(ast)
+
+        prg.ast = ast

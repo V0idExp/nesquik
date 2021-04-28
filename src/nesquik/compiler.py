@@ -11,6 +11,7 @@ from nesquik.ir_generator import IRGenerator
 from nesquik.ir_optimizer import IROptimizer
 from nesquik.lib import DIV, MUL
 from nesquik.opcodes import OPCODES, AddrMode, Op
+from nesquik.classes import Program, Stage
 
 
 GLOBAL_LABEL = re.compile(r'^\w{3,}$')
@@ -61,17 +62,6 @@ class NESQuikBadArgs(Exception):
     pass
 
 
-class Program:
-
-    def __init__(self, ast, org):
-        self.ast = ast
-        self.org = org
-        self.asm = []
-        self.code = []
-        self.ir = []
-        self.obj = bytearray()
-
-
 class Reg(Enum):
 
     A = 'A'
@@ -105,11 +95,6 @@ class Function:
     name: str
     args: List[Variable]
 
-
-class Stage:
-
-    def exec(self, prg: Program):
-        raise NotImplementedError
 
 
 def parse_int(s):

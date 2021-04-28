@@ -4,8 +4,9 @@ import click
 import colorama
 from lark import logger
 
-from nesquik.compiler import compile
-from nesquik.parser import parse
+from nesquik.classes import Program
+from nesquik.ir_generator import IRGenerator
+from nesquik.parser import Parser
 from nesquik.util import print_ir
 
 
@@ -35,10 +36,19 @@ class AddrType(click.ParamType):
     help='Program start address')
 def nq(file, out, org):
     code = file.read()
-    ast = parse(code)
-    print(ast.pretty())
+    prg = Program(code, org)
 
-    prg = compile(ast, org)
+    stages = [
+        Parser,
+        IRGenerator,
+    ]
+
+    for cls in stages:
+        stage = cls()
+        stage.exec(prg)
+
+    print(prg.ast.pretty())
+
     print('\n'.join(prg.asm))
 
     print_ir(prg.ir)

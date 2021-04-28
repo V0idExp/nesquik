@@ -1,6 +1,7 @@
 import pytest
-from nesquik.compiler import compile
-from nesquik.parser import parse
+from nesquik.classes import Program
+from nesquik.ir_generator import IRGenerator
+from nesquik.parser import Parser
 from py65.devices.mpu6502 import MPU
 
 
@@ -14,14 +15,18 @@ class CPU(MPU):
     def compile(self, code):
         self.reset()
 
-        org = 0xc000
+        prg = Program(source=code, org=0xc000)
 
-        ast = parse(code)
-        prg = compile(ast, org=org)
-        obj = prg.obj
+        stages = [
+            Parser(),
+            IRGenerator(),
+        ]
 
-        self.memory[org:org + len(obj)] = obj
-        self.pc = org
+        for stage in stages:
+            stage.exec(prg)
+
+        self.memory[prg.org:prg.org + len(prg.obj)] = prg.obj
+        self.pc = prg.org
 
         return prg
 
