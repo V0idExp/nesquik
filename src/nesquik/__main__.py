@@ -1,10 +1,12 @@
 import logging
 
 import click
+import colorama
 from lark import logger
 
 from nesquik.compiler import compile
 from nesquik.parser import parse
+from nesquik.util import print_ir
 
 
 logger.setLevel(logging.DEBUG)
@@ -39,6 +41,8 @@ def nq(file, out, org):
     prg = compile(ast, org)
     print('\n'.join(prg.asm))
 
+    print_ir(prg.ir)
+
     print()
     for byte in prg.obj:
         print(hex(byte)[2:], end=' ')
@@ -51,4 +55,5 @@ def nq(file, out, org):
 
 
 if __name__ == '__main__':
+    colorama.init()
     nq()  # pylint: disable=no-value-for-parameter

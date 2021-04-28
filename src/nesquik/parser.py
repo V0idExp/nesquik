@@ -29,7 +29,7 @@ _grammar = r'''
               | assign
               | mem_assign
               | index_assign
-              | call
+              | expression
               | ret
               | "pass"
 

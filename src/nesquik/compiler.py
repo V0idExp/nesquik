@@ -7,8 +7,11 @@ from typing import List
 from lark.tree import Tree
 from lark.visitors import Interpreter
 
+from nesquik.ir_generator import IRGenerator
+from nesquik.ir_optimizer import IROptimizer
 from nesquik.lib import DIV, MUL
 from nesquik.opcodes import OPCODES, AddrMode, Op
+
 
 GLOBAL_LABEL = re.compile(r'^\w{3,}$')
 
@@ -65,6 +68,7 @@ class Program:
         self.org = org
         self.asm = []
         self.code = []
+        self.ir = []
         self.obj = bytearray()
 
 
@@ -1357,9 +1361,11 @@ class Assembler(Stage):
 
 
 STAGES = [
-    CodeGenerator,
-    AddressInjector,
-    Assembler,
+    IRGenerator,
+    IROptimizer,
+    # CodeGenerator,
+    # AddressInjector,
+    # Assembler,
 ]
 
 
