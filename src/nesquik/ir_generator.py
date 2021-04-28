@@ -1,5 +1,7 @@
+from dataclasses import dataclass
 from enum import Enum
 from itertools import count
+
 from lark.visitors import Interpreter
 
 
@@ -17,7 +19,6 @@ class Op(Enum):
     LEQ     = '<='
     LT      = '<'
     IF_Z    = 'if_z'
-    IF_NZ   = 'if_nz'
     JMP     = 'jmp'
     RET     = 'ret'
     EMPTY   = ''
@@ -40,48 +41,20 @@ class Value:
         return f'{self.value}'
 
 
+class Label(Value):
+
+    def __init__(self, value: int):
+        super().__init__(Location.CODE, value)
+
+
+@dataclass
 class TAC:
 
-    def __init__(self, op: Op, dst, first, second=None, label=None):
-        self.op = op
-        self.dst = dst
-        self.first = first
-        self.second = second
-        self.label = label
-
-
-class Assignment(TAC):
-
-    pass
-
-
-class BinOp(TAC):
-
-    pass
-
-
-class Branch(TAC):
-
-    def __init__(self, if_nonzero, label, cond):
-        super().__init__(Op.IF_NZ if if_nonzero else Op.IF_Z, label, cond)
-
-
-class Goto(TAC):
-
-    def __init__(self, label):
-        super().__init__(Op.JMP, label, None)
-
-
-class Label(TAC):
-
-    def __init__(self, label):
-        super().__init__(Op.EMPTY, None, None, None, label)
-
-
-class Return(TAC):
-
-    def __init__(self, expr):
-        super().__init__(Op.RET, None, expr, None, None)
+    op: Op
+    dst: Value = None
+    first: Value = None
+    second: Value = None
+    label: Label = None
 
 
 class IRGenerator(Interpreter):
@@ -135,35 +108,35 @@ class IRGenerator(Interpreter):
         self._binop(t, Op.LT)
 
     def if_stmt(self, t):
-        labels = [Value(Location.CODE, self._alloc_label()) for _ in range(len(t.children))]
+        labels = [Label(self._alloc_label()) for _ in range(len(t.children))]
         end_label = labels[-1]
 
         for i, branch in enumerate(t.children):
             is_last_branch = i == len(t.children) - 1
 
             if i > 0:
-                self.code.append(Label(labels[i - 1]))
+                self.code.append(TAC(Op.EMPTY, dst=None, label=labels[i - 1]))
 
             # condition branch (if, elif)
             if len(branch.children) > 1:
                 cond, body = branch.children
                 self.visit(cond)
-                self.code.append(Branch(False, labels[i], cond.val))
+                self.code.append(TAC(Op.IF_Z, dst=labels[i], first=cond.val))
                 self.visit(body)
 
                 if not is_last_branch:
-                    self.code.append(Goto(end_label))
+                    self.code.append(TAC(Op.JMP, dst=end_label))
 
             # conditionless branch (else)
             else:
                 self.visit(branch)
 
-        self.code.append(Label(end_label))
+        self.code.append(TAC(Op.EMPTY, label=end_label))
 
     def ret(self, t):
         self.visit_children(t)
         expr = t.children[0]
-        self.code.append(Return(expr.val))
+        self.code.append(TAC(Op.RET, first=expr.val))
 
     def _alloc_reg(self):
         return next(self.regcounter)
@@ -177,8 +150,9 @@ class IRGenerator(Interpreter):
 
         reg = self._alloc_reg()
         value = Value(Location.REGISTER, reg)
-        self.code.append(BinOp(op, value, left.val, right.val))
+        self.code.append(TAC(op, value, left.val, right.val))
         self._setval(t, value)
+
 
     def _setval(self, t, val):
         setattr(t, 'val', val)
