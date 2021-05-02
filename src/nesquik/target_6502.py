@@ -75,7 +75,7 @@ class AsmGenerator(Stage):
                 other = tac.second
             elif self.a == tac.second:
                 # second operand is already in A, swap with first
-                other = tac.second
+                other = tac.first
             else:
                 # no operands are in A, save whatever is located in A to stack
                 # and load the first operand
@@ -108,14 +108,32 @@ class AsmGenerator(Stage):
         self._load_a(tac.first)
         self.code.append(Instruction(Op.TAY, AddrMode.Implied))
 
+    def _ir_neg(self, tac):
+        self._push_a()
+        self._load_a(tac.first)
+
+        self.code.extend([
+            Instruction(Op.CLC, AddrMode.Implied),
+            Instruction(Op.EOR, AddrMode.Immediate, 255),
+            Instruction(Op.ADC, AddrMode.Immediate, 1),
+        ])
+
+        if tac.dst.loc is Location.REGISTER:
+            self.a = tac.dst
+        else:
+            raise InternalCompilerError(f'unsupported destination location {tac.dst.loc}')
+
     def _value_op(self, dst, value, op):
         if value.loc is Location.IMMEDIATE:
             self.code.append(Instruction(op, AddrMode.Immediate, value.value))
-        elif value in self.stack:
-            self.code.extend([
-                Instruction(Op.LDY, AddrMode.Immediate, self.stack[value]),
-                Instruction(op, AddrMode.IndirectY, self.baseptr),
-            ])
+        elif value.loc is Location.REGISTER:
+            try:
+                self.code.extend([
+                    Instruction(Op.LDY, AddrMode.Immediate, self.stack[value]),
+                    Instruction(op, AddrMode.IndirectY, self.baseptr),
+                ])
+            except KeyError:
+                raise InternalCompilerError(f'register value {value.value} expected to be on stack, but it is not')
         else:
             raise InternalCompilerError(f'unsupported operand location {value.loc}')
 

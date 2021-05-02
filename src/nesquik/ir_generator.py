@@ -26,6 +26,13 @@ class IRGenerator(Interpreter, Stage):
 
         self._setval(t, Value(Location.IMMEDIATE, val))
 
+    def neg(self, t):
+        self.visit_children(t)
+        reg = self._alloc_reg()
+        value = Value(Location.REGISTER, reg)
+        self.code.append(TAC(Op.NEG, value, t.children[0].val))
+        self._setval(t, value)
+
     def sub(self, t):
         self._binop(t, Op.SUB)
 

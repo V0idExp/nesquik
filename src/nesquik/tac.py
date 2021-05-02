@@ -8,6 +8,7 @@ class Op(Enum):
     ADD     = '+'
     SUB     = '-'
     MUL     = '*'
+    NEG     = '\u2212'
     DIV     = '/'
     EQ      = '=='
     NEQ     = '!='

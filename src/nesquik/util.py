@@ -62,6 +62,11 @@ def _fmt_return(tac):
         f' {_fmt_value(tac.first)}')
 
 
+def _fmt_neg(tac):
+    return (
+        _fmt_padding(tac) + f'{_fmt_value(tac.dst)} = -{_fmt_value(tac.first)}')
+
+
 _FORMATTERS = {
     Op.ADD: _fmt_binop,
     Op.SUB: _fmt_binop,
@@ -77,6 +82,7 @@ _FORMATTERS = {
     Op.JMP: _fmt_goto,
     Op.EMPTY: _fmt_label,
     Op.RET: _fmt_return,
+    Op.NEG: _fmt_neg,
 }
 
 
