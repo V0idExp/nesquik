@@ -219,6 +219,46 @@ class AsmGenerator(Stage):
             Instruction(Op.NOP, AddrMode.Implied, label=false_lbl),
         ])
 
+    def _ir_geq(self, tac):
+        self.__geq(tac.dst, tac.first, tac.second)
+
+    def _ir_leq(self, tac):
+        self.__geq(tac.dst, tac.second, tac.first)
+
+    def _ir_gt(self, tac):
+        self.__gt(tac.dst, tac.first, tac.second)
+
+    def _ir_lt(self, tac):
+        self.__gt(tac.dst, tac.second, tac.first)
+
+    def __geq(self, dst, first, second):
+        self.__ordered_value_op(Op.CMP, dst, first, second)
+
+        true_lbl, end_lbl = self.__get_labels(2)
+
+        self.code.extend([
+            Instruction(Op.BCS, AddrMode.Relative, true_lbl),
+            Instruction(Op.BEQ, AddrMode.Relative, true_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 0),
+            Instruction(Op.BEQ, AddrMode.Relative, end_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 1, label=true_lbl),
+            Instruction(Op.NOP, AddrMode.Implied, label=end_lbl),
+        ])
+
+    def __gt(self, dst, first, second):
+        self.__ordered_value_op(Op.CMP, dst, first, second)
+
+        false_lbl, end_lbl = self.__get_labels(2)
+
+        self.code.extend([
+            Instruction(Op.BCC, AddrMode.Relative, false_lbl),
+            Instruction(Op.BEQ, AddrMode.Relative, false_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 1),
+            Instruction(Op.BNE, AddrMode.Relative, end_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 0, label=false_lbl),
+            Instruction(Op.NOP, AddrMode.Implied, label=end_lbl),
+        ])
+
     def __unordered_value_op(self, op, dst, first, second):
         if self.a is not None:
             # if A register has a value, check whether it's one of the operands,
