@@ -2,7 +2,7 @@ import pytest
 from nesquik.classes import Program
 from nesquik.ir_generator import IRGenerator
 from nesquik.parser import Parser
-from nesquik.target_6502 import AsmGenerator, ObjGenerator
+from nesquik.target_6502 import STAGES
 from py65.devices.mpu6502 import MPU
 
 
@@ -21,9 +21,7 @@ class CPU(MPU):
         stages = [
             Parser(),
             IRGenerator(),
-            AsmGenerator(),
-            ObjGenerator(),
-        ]
+        ] + [cls() for cls in STAGES]
 
         for stage in stages:
             stage.exec(prg)

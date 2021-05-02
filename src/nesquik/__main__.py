@@ -8,7 +8,7 @@ from nesquik.classes import Program
 from nesquik.ir_generator import IRGenerator
 from nesquik.parser import Parser
 from nesquik.util import print_ir
-from nesquik import target_6502
+from nesquik.target_6502 import STAGES
 
 
 logger.setLevel(logging.DEBUG)
@@ -42,9 +42,7 @@ def nq(file, out, org):
     stages = [
         Parser,
         IRGenerator,
-        target_6502.AsmGenerator,
-        target_6502.ObjGenerator,
-    ]
+    ] + STAGES
 
     for cls in stages:
         stage = cls()
