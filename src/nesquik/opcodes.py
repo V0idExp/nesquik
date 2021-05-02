@@ -24,6 +24,7 @@ class Op(Enum):
     LDX = 'ldx'
     LDY = 'ldy'
     LSR = 'lsr'
+    NOP = 'nop'
     PHA = 'pha'
     PLA = 'pla'
     ROL = 'rol'
@@ -82,6 +83,7 @@ OPCODES = {
     (Op.INY, AddrMode.Implied):     (0xC8, 1),
     (Op.JMP, AddrMode.Absolute):    (0x4C, 3),
     (Op.JSR, AddrMode.Absolute):    (0x20, 3),
+    (Op.NOP, AddrMode.Implied):     (0xEA, 1),
     (Op.LDA, AddrMode.Immediate):   (0xA9, 2),
     (Op.LDA, AddrMode.IndirectX):   (0xA1, 2),
     (Op.LDA, AddrMode.IndirectY):   (0xB1, 2),

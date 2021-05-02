@@ -1,5 +1,5 @@
 from collections import namedtuple
-from itertools import chain
+from itertools import chain, count, islice
 from typing import NamedTuple, Optional, Union
 
 from nesquik.classes import Stage
@@ -76,6 +76,7 @@ class AsmGenerator(Stage):
         self.baseptr = 0x04
         self.stack = {}
         self.requires = {}
+        self.label_counter = count()
 
     def exec(self, prg):
         # preamble: base pointer initialization, etc
@@ -121,43 +122,12 @@ class AsmGenerator(Stage):
         prg.code = self.code
 
     def _ir_add(self, tac):
-        if self.a is not None:
-            # if A register has a value, check whether it's one of the operands,
-            # in order to avoid unnecessary load, and swap the operands if needed
-
-            if self.a == tac.first:
-                # first operand already in A, proceed by adding second
-                other = tac.second
-            elif self.a == tac.second:
-                # second operand is already in A, swap with first
-                other = tac.first
-            else:
-                # no operands are in A, save whatever is located in A to stack
-                # and load the first operand
-                self._push_a()
-                self._load_a(tac.first)
-                other = tac.second
-
-        else:
-            # A is empty, just load the first operand and add the second
-            self._load_a(tac.first)
-            other = tac.second
-
-        # clear carry flag
         self.code.append(Instruction(Op.CLC, AddrMode.Implied))
-
-        # perform the operation on the value
-        self._value_op(tac.dst, other, Op.ADC)
+        self.__unordered_value_op(Op.ADC, tac.dst, tac.first, tac.second)
 
     def _ir_sub(self, tac):
-        self._push_a()
-        self._load_a(tac.first)
-
-        # set carry flag
         self.code.append(Instruction(Op.SEC, AddrMode.Implied))
-
-        # perform the operation on the value
-        self._value_op(tac.dst, tac.second, Op.SBC)
+        self.__ordered_value_op(Op.SBC, tac.dst, tac.first, tac.second)
 
     def _ir_ret(self, tac):
         self._load_a(tac.first)
@@ -223,7 +193,64 @@ class AsmGenerator(Stage):
         else:
             raise InternalCompilerError(f'unsupported destination location {tac.dst.loc}')
 
-    def _value_op(self, dst, value, op):
+    def _ir_eq(self, tac):
+        self.__unordered_value_op(Op.CMP, tac.dst, tac.first, tac.second)
+
+        true_lbl, false_lbl = self.__get_labels(2)
+
+        self.code.extend([
+            Instruction(Op.BEQ, AddrMode.Relative, true_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 0),
+            Instruction(Op.BEQ, AddrMode.Relative, false_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 1, label=true_lbl),
+            Instruction(Op.NOP, AddrMode.Implied, label=false_lbl),
+        ])
+
+    def _ir_neq(self, tac):
+        self.__unordered_value_op(Op.CMP, tac.dst, tac.first, tac.second)
+
+        true_lbl, false_lbl = self.__get_labels(2)
+
+        self.code.extend([
+            Instruction(Op.BNE, AddrMode.Relative, true_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 0),
+            Instruction(Op.BNE, AddrMode.Relative, false_lbl),
+            Instruction(Op.LDA, AddrMode.Immediate, 1, label=true_lbl),
+            Instruction(Op.NOP, AddrMode.Implied, label=false_lbl),
+        ])
+
+    def __unordered_value_op(self, op, dst, first, second):
+        if self.a is not None:
+            # if A register has a value, check whether it's one of the operands,
+            # in order to avoid unnecessary load, and swap the operands if needed
+
+            if self.a == first:
+                # first operand already in A
+                other = second
+            elif self.a == second:
+                # second operand is already in A, swap with first
+                other = first
+            else:
+                # no operands are in A, save whatever is located in A on stack
+                # and load the first operand
+                self._push_a()
+                self._load_a(first)
+                other = second
+
+        else:
+            # A is empty, just load the first operand
+            self._load_a(first)
+            other = second
+
+        # perform the operation on A and the other operand
+        self._value_op(op, dst, other)
+
+    def __ordered_value_op(self, op, dst, first, second):
+        self._push_a()
+        self._load_a(first)
+        self._value_op(op, dst, second)
+
+    def _value_op(self, op, dst, value):
         if value.loc is Location.IMMEDIATE:
             self.code.append(Instruction(op, AddrMode.Immediate, value.value))
         elif value.loc is Location.REGISTER:
@@ -260,6 +287,9 @@ class AsmGenerator(Stage):
             ])
         else:
             raise InternalCompilerError(f'unsupported value location {val.loc}')
+
+    def __get_labels(self, n):
+        return [f'_{i}' for i in islice(self.label_counter, n)]
 
 
 class AddressInjector(Stage):
