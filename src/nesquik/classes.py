@@ -20,9 +20,11 @@ class Program:
     # Intermediate Representation code, as sequence of Three-Address-Code
     # objects
     ir: list[TAC]
-    # Target architecture assembly code
+    # Target architecture code (implementation-specific)
+    code: any
+    # Target architecture assembly source code
     asm: list[str]
-    # Target architecture object (machine) code
+    # Target architecture bytecode
     obj: bytearray
 
     def __init__(self, source: list[str], org: int):

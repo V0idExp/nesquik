@@ -2,8 +2,13 @@ from collections import namedtuple
 from typing import NamedTuple, Optional
 
 from nesquik.classes import Stage
-from nesquik.opcodes import AddrMode, Op
+from nesquik.opcodes import AddrMode, Op, OPCODES
 from nesquik.tac import Op as TacOp, Location
+
+
+class InternalCompilerError(Exception):
+
+    pass
 
 
 class Instruction(NamedTuple):
@@ -26,18 +31,24 @@ class AsmGenerator(Stage):
         }
 
         self.baseptr = 0x04
-        self.stack_index = 0xff
 
         self.ir_transformers = {
             TacOp.ADD: self._add,
+            TacOp.RET: self._ret,
         }
+
+        self.stack = {}
 
     def exec(self, prg):
         # preamble: base pointer initialization, etc
         self.code.extend([
-            Instruction(Op.LDA, AddrMode.Immediate, 0),
-            Instruction(Op.STA, AddrMode.Zeropage, self.baseptr),
+            Instruction(Op.PHA, AddrMode.Implied),
+
+            # base pointer LO
             Instruction(Op.LDA, AddrMode.Immediate, 0xff),
+            Instruction(Op.STA, AddrMode.Zeropage, self.baseptr),
+            # base pointer HI
+            Instruction(Op.LDA, AddrMode.Immediate, 0),
             Instruction(Op.STA, AddrMode.Zeropage, self.baseptr + 1),
         ])
 
@@ -56,30 +67,84 @@ class AsmGenerator(Stage):
                 prg.asm.append(f'{instr.op.value} #{instr.arg}')
             elif instr.mode in (AddrMode.Zeropage, AddrMode.Absolute):
                 prg.asm.append(f'{instr.op.value} ${hex(instr.arg)[2:]}')
+            elif instr.mode is AddrMode.IndirectY:
+                prg.asm.append(f'{instr.op.value} (${hex(instr.arg)[2:]}),Y')
+
+        prg.code = self.code
 
     def _add(self, tac):
-        self._push_a()
+        if self.a is not None:
+            # if A register has a value, check whether it's one of the operands,
+            # in order to avoid unnecessary load, and swap the operands if needed
+
+            if self.a == tac.first:
+                # first operand already in A, proceed by adding second
+                other = tac.second
+            elif self.a == tac.second:
+                # second operand is already in A, swap with first
+                other = tac.second
+            else:
+                # no operands are in A, save whatever is located in A to stack
+                # and load the first operand
+                self._push_a()
+                self._load_a(tac.first)
+                other = tac.second
+
+        else:
+            # A is empty, just load the first operand and add the second
+            self._load_a(tac.first)
+            other = tac.second
+
+        # clear carry flag
+        self.code.append(Instruction(Op.CLC, AddrMode.Implied))
+
+        if other.loc is Location.IMMEDIATE:
+            self.code.append(Instruction(Op.ADC, AddrMode.Immediate, other.value))
+        elif other in self.stack:
+            self.code.extend([
+                Instruction(Op.LDY, AddrMode.Immediate, self.stack[other]),
+                Instruction(Op.ADC, AddrMode.IndirectY, self.baseptr),
+            ])
+        else:
+            raise InternalCompilerError(f'unsupported operand location {other.loc}')
+
+        if tac.dst.loc is Location.REGISTER:
+            self.a = tac.dst
+        else:
+            raise InternalCompilerError(f'unsupported destination location {tac.dst.loc}')
+
+    def _ret(self, tac):
         self._load_a(tac.first)
-        # push A to stack
-        # load first into A
-        # add second
-        pass
+        self.code.append(Instruction(Op.TAY, AddrMode.Implied))
 
     def _push_a(self):
         if self.a is not None:
             self.code.append(Instruction(Op.PHA, AddrMode.Implied))
+            self.stack[self.a] = 0xff - len(self.stack)
 
     def _load_a(self, val):
-        if val.loc is Location.IMMEDIATE:
+        if self.a is not None and self.a == val:
+            # the value is already in the register
+            pass
+        elif val.loc is Location.IMMEDIATE:
             self.code.append(Instruction(Op.LDA, AddrMode.Immediate, val.value))
-        elif val.loc is Location.REGISTER:
-            self.code.append(Instruction(Op.LDA, AddrMode.IndirectY, val.value))
+        elif val in self.stack:
+            self.code.extend([
+                Instruction(Op.LDY, AddrMode.Immediate, self.stack[val]),
+                Instruction(Op.LDA, AddrMode.IndirectY, self.baseptr),
+            ])
         else:
-            raise RuntimeError(f'unsupported value location {val.loc}')
-
+            raise InternalCompilerError(f'unsupported value location {val.loc}')
 
 
 class ObjGenerator(Stage):
 
     def exec(self, prg):
-        pass
+        for instr in prg.code:
+            code, size = OPCODES[(instr.op, instr.mode)]
+            if size == 1:
+                prg.obj.append(code)
+            else:
+                if instr.arg is None:
+                    raise InternalCompilerError(f'instruction {instr.op} expects an argument')
+                prg.obj.extend((code, instr.arg))

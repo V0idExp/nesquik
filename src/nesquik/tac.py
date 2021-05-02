@@ -37,6 +37,12 @@ class Value:
     def __str__(self):
         return f'{self.value}'
 
+    def __hash__(self):
+        return hash((self.loc, self.value))
+
+    def __eq__(self, other):
+        return other.loc == self.loc and other.value == self.value
+
 
 class Label(Value):
 
