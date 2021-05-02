@@ -8,6 +8,7 @@ from nesquik.classes import Program
 from nesquik.ir_generator import IRGenerator
 from nesquik.parser import Parser
 from nesquik.util import print_ir
+from nesquik import target_6502
 
 
 logger.setLevel(logging.DEBUG)
@@ -41,6 +42,8 @@ def nq(file, out, org):
     stages = [
         Parser,
         IRGenerator,
+        target_6502.AsmGenerator,
+        target_6502.ObjGenerator,
     ]
 
     for cls in stages:
@@ -49,9 +52,10 @@ def nq(file, out, org):
 
     print(prg.ast.pretty())
 
-    print('\n'.join(prg.asm))
 
     print_ir(prg.ir)
+
+    print('\n'.join(prg.asm))
 
     print()
     for byte in prg.obj:
