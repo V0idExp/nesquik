@@ -34,6 +34,7 @@ class AsmGenerator(Stage):
 
         self.ir_transformers = {
             TacOp.ADD: self._add,
+            TacOp.SUB: self._sub,
             TacOp.RET: self._ret,
         }
 
@@ -98,24 +99,38 @@ class AsmGenerator(Stage):
         # clear carry flag
         self.code.append(Instruction(Op.CLC, AddrMode.Implied))
 
-        if other.loc is Location.IMMEDIATE:
-            self.code.append(Instruction(Op.ADC, AddrMode.Immediate, other.value))
-        elif other in self.stack:
-            self.code.extend([
-                Instruction(Op.LDY, AddrMode.Immediate, self.stack[other]),
-                Instruction(Op.ADC, AddrMode.IndirectY, self.baseptr),
-            ])
-        else:
-            raise InternalCompilerError(f'unsupported operand location {other.loc}')
+        # perform the operation on the value
+        self._value_op(tac.dst, other, Op.ADC)
 
-        if tac.dst.loc is Location.REGISTER:
-            self.a = tac.dst
-        else:
-            raise InternalCompilerError(f'unsupported destination location {tac.dst.loc}')
+    def _sub(self, tac):
+        self._push_a()
+        self._load_a(tac.first)
+
+        # set carry flag
+        self.code.append(Instruction(Op.SEC, AddrMode.Implied))
+
+        # perform the operation on the value
+        self._value_op(tac.dst, tac.second, Op.SBC)
 
     def _ret(self, tac):
         self._load_a(tac.first)
         self.code.append(Instruction(Op.TAY, AddrMode.Implied))
+
+    def _value_op(self, dst, value, op):
+        if value.loc is Location.IMMEDIATE:
+            self.code.append(Instruction(op, AddrMode.Immediate, value.value))
+        elif value in self.stack:
+            self.code.extend([
+                Instruction(Op.LDY, AddrMode.Immediate, self.stack[value]),
+                Instruction(op, AddrMode.IndirectY, self.baseptr),
+            ])
+        else:
+            raise InternalCompilerError(f'unsupported operand location {value.loc}')
+
+        if dst.loc is Location.REGISTER:
+            self.a = dst
+        else:
+            raise InternalCompilerError(f'unsupported destination location {dst.loc}')
 
     def _push_a(self):
         if self.a is not None:
