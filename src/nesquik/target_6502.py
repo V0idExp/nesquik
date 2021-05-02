@@ -40,6 +40,28 @@ _MUL_SUBROUTINE = (
 )
 
 
+# Division subroutine.
+# $0 - dividend
+# $1 - divisor
+# A  - result
+#
+# http://6502org.wikidot.com/software-math-intdiv
+_DIV_SUBROUTINE = (
+    Instruction(Op.LDA, AddrMode.Immediate, 0, label='div'),
+    Instruction(Op.LDX, AddrMode.Immediate, 8),
+    Instruction(Op.ASL, AddrMode.Zeropage, 0),
+    Instruction(Op.ROL, AddrMode.Implied, label='div0'),
+    Instruction(Op.CMP, AddrMode.Zeropage, 1),
+    Instruction(Op.BCC, AddrMode.Relative, 'div1'),
+    Instruction(Op.SBC, AddrMode.Zeropage, 1),
+    Instruction(Op.ROL, AddrMode.Zeropage, 0, label='div1'),
+    Instruction(Op.DEX, AddrMode.Implied),
+    Instruction(Op.BNE, AddrMode.Relative, 'div0'),
+    Instruction(Op.LDA, AddrMode.Zeropage, 0),
+    Instruction(Op.RTS, AddrMode.Implied),
+)
+
+
 class AsmGenerator(Stage):
 
     def __init__(self):
@@ -76,6 +98,7 @@ class AsmGenerator(Stage):
                 print(f'unsupported IR code {tac.op.name}')
 
         # add the required subroutines
+        self.code.append(Instruction(Op.BRK, AddrMode.Implied))
         self.code.extend(chain.from_iterable(self.requires.values()))
 
         # generate the assembly
@@ -182,6 +205,23 @@ class AsmGenerator(Stage):
         else:
             raise InternalCompilerError(f'unsupported destination location {tac.dst.loc}')
 
+    def _ir_div(self, tac):
+        if 'div' not in self.requires:
+            self.requires['div'] = _DIV_SUBROUTINE
+
+        if self.a is None or self.a != tac.first:
+            self._push_a()
+            self._load_a(tac.first)
+
+        self.code.append(Instruction(Op.STA, AddrMode.Zeropage, 0))
+        self._load_a(tac.second)
+        self.code.append(Instruction(Op.STA, AddrMode.Zeropage, 1))
+        self.code.append(Instruction(Op.JSR, AddrMode.Absolute, 'div'))
+
+        if tac.dst.loc is Location.REGISTER:
+            self.a = tac.dst
+        else:
+            raise InternalCompilerError(f'unsupported destination location {tac.dst.loc}')
 
     def _value_op(self, dst, value, op):
         if value.loc is Location.IMMEDIATE:
