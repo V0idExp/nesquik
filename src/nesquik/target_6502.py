@@ -29,15 +29,7 @@ class AsmGenerator(Stage):
         self.tmp = {
             i: None for i in range(4)
         }
-
         self.baseptr = 0x04
-
-        self.ir_transformers = {
-            TacOp.ADD: self._add,
-            TacOp.SUB: self._sub,
-            TacOp.RET: self._ret,
-        }
-
         self.stack = {}
 
     def exec(self, prg):
@@ -56,8 +48,8 @@ class AsmGenerator(Stage):
         # transform the IR code to 6502 instructions
         for tac in prg.ir:
             try:
-                self.ir_transformers[tac.op](tac)
-            except KeyError:
+                getattr(self, f'_ir_{tac.op.name.lower()}')(tac)
+            except AttributeError:
                 print(f'unsupported IR code {tac.op.name}')
 
         # generate the assembly
@@ -73,7 +65,7 @@ class AsmGenerator(Stage):
 
         prg.code = self.code
 
-    def _add(self, tac):
+    def _ir_add(self, tac):
         if self.a is not None:
             # if A register has a value, check whether it's one of the operands,
             # in order to avoid unnecessary load, and swap the operands if needed
@@ -102,7 +94,7 @@ class AsmGenerator(Stage):
         # perform the operation on the value
         self._value_op(tac.dst, other, Op.ADC)
 
-    def _sub(self, tac):
+    def _ir_sub(self, tac):
         self._push_a()
         self._load_a(tac.first)
 
@@ -112,7 +104,7 @@ class AsmGenerator(Stage):
         # perform the operation on the value
         self._value_op(tac.dst, tac.second, Op.SBC)
 
-    def _ret(self, tac):
+    def _ir_ret(self, tac):
         self._load_a(tac.first)
         self.code.append(Instruction(Op.TAY, AddrMode.Implied))
 
